@@ -31,7 +31,12 @@ defmodule CastorEDC.Explorer.FrameTest do
   test "casts values to the column's dtype, and others to nil" do
     assert Frame.cast(3, {:f, 64}) === 3.0
     assert Frame.cast(3, {:s, 16}) == 3
-    assert Frame.cast(~U[2026-10-07 12:30:00Z], {:datetime, :microsecond, "Etc/UTC"}) == ~U[2026-10-07 12:30:00Z]
+
+    assert DateTime.compare(
+             Frame.cast(~U[2026-10-07 12:30:00Z], {:datetime, :microsecond, "Etc/UTC"}),
+             ~U[2026-10-07 12:30:00Z]
+           ) == :eq
+
     assert Frame.cast(false, :boolean) == false
     assert Frame.cast(MissingValue.new(95), :boolean) == nil
     assert Frame.cast("not a number", {:f, 64}) == nil

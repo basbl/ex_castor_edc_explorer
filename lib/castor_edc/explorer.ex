@@ -103,6 +103,168 @@ defmodule CastorEDC.Explorer do
     error in CastorEDC.Error -> {:error, error}
   end
 
+  @datetime {:datetime, :microsecond, "Etc/UTC"}
+
+  @participants [
+    {"participant_id", :participant_id, :string},
+    {"site_id", :site_id, :string},
+    {"site_name", :site_name, :string},
+    {"status", :status, :string},
+    {"participant_status", :participant_status, :string},
+    {"progress", :progress, {:f, 64}},
+    {"locked", :locked, :boolean},
+    {"archived", :archived, :boolean},
+    {"archived_reason", :archived_reason, :string},
+    {"randomization_group", :randomization_group, {:s, 64}},
+    {"randomization_group_name", :randomization_group_name, :string},
+    {"randomized_id", :randomized_id, :string},
+    {"randomized_on", :randomized_on, @datetime},
+    {"created_by", :created_by, :string},
+    {"created_on", :created_on, @datetime},
+    {"updated_by", :updated_by, :string},
+    {"updated_on", :updated_on, @datetime}
+  ]
+
+  @fields [
+    {"field_id", :field_id, :string},
+    {"variable_name", :variable_name, :string},
+    {"label", :label, :string},
+    {"field_type", :field_type, :string},
+    {"value_type", :value_type, :string},
+    {"context", :context, :string},
+    {"parent_id", :parent_id, :string},
+    {"parent_name", :parent_name, :string},
+    {"form_id", :form_id, :string},
+    {"form_name", :form_name, :string},
+    {"field_number", :field_number, {:s, 64}},
+    {"option_group_id", :option_group_id, :string},
+    {"required", :required, :boolean},
+    {"hidden", :hidden, :boolean},
+    {"units", :units, :string},
+    {"min", :field_min, {:f, 64}},
+    {"max", :field_max, {:f, 64}}
+  ]
+
+  @sites [
+    {"site_id", :id, :string},
+    {"name", :name, :string},
+    {"abbreviation", :abbreviation, :string},
+    {"code", :code, :string},
+    {"country_id", :country_id, {:s, 64}},
+    {"order", :order, {:s, 64}},
+    {"deleted", :deleted, :boolean}
+  ]
+
+  @option_groups [
+    {"option_group_id", :option_group_id, :string},
+    {"option_group_name", :option_group_name, :string},
+    {"value", :value, :string},
+    {"name", :name, :string},
+    {"order", :order, {:s, 64}}
+  ]
+
+  @doc """
+  The study's participants, a row each.
+
+  Columns: `participant_id`, `site_id` and `site_name`, `status`,
+  `participant_status` (the name of the study's own status, if it has
+  them), `progress` (`{:f, 64}`, a percentage), `locked` and `archived`
+  (`:boolean`), `archived_reason`, `randomization_group` (`{:s, 64}`),
+  `randomization_group_name`, `randomized_id`, `randomized_on`,
+  `created_by`, `created_on`, `updated_by` and `updated_on`. Dates and
+  times are `{:datetime, :microsecond, "Etc/UTC"}`, the rest `:string`.
+  """
+  @spec participants(CastorEDC.client(), String.t()) :: {:ok, DataFrame.t()} | {:error, CastorEDC.Error.t()}
+  def participants(client, study_id) do
+    resource(@participants, fn ->
+      for participant <- CastorEDC.Participants.stream_participants(client, study_id) do
+        Map.merge(Map.from_struct(participant), %{
+          site_id: participant.site && participant.site.id,
+          site_name: participant.site && participant.site.name,
+          participant_status: participant.participant_status && participant.participant_status.name
+        })
+      end
+    end)
+  end
+
+  @doc """
+  The study's fields that hold values, a row each, in the order the study
+  shows them, from `CastorEDC.Tabular.schema/2`.
+
+  Columns: `field_id`, `variable_name`, `label`, `field_type`,
+  `value_type` (as `CastorEDC.Tabular.value_type/1` gives it, such as
+  `"number"` or `"list(string)"`), `context` (`"study"`,
+  `"repeating_data"` or `"survey"`), `parent_id` and `parent_name` (the
+  visit, repeating data or survey), `form_id`, `form_name`,
+  `field_number` (`{:s, 64}`), `option_group_id`, `required` and `hidden`
+  (`:boolean`), `units`, and `min` and `max` (`{:f, 64}`).
+
+  Join `option_group_id` with `option_groups/2` for the options.
+  """
+  @spec fields(CastorEDC.client(), String.t()) :: {:ok, DataFrame.t()} | {:error, CastorEDC.Error.t()}
+  def fields(client, study_id) do
+    resource(@fields, fn ->
+      for column <- client |> schema!(study_id) |> Map.values() |> Enum.sort_by(& &1.position) do
+        Map.merge(column, %{
+          value_type: value_type(column.type),
+          context: column.context && Atom.to_string(column.context),
+          field_number: column.field.field_number,
+          option_group_id: column.option_group && column.option_group.id,
+          required: flag(column.field.field_required),
+          hidden: flag(column.field.field_hidden),
+          units: column.field.field_units,
+          field_min: column.field.field_min,
+          field_max: column.field.field_max
+        })
+      end
+    end)
+  end
+
+  @doc """
+  The study's sites, a row each.
+
+  Columns: `site_id`, `name`, `abbreviation`, `code`, `country_id` and
+  `order` (`{:s, 64}`) and `deleted` (`:boolean`).
+  """
+  @spec sites(CastorEDC.client(), String.t()) :: {:ok, DataFrame.t()} | {:error, CastorEDC.Error.t()}
+  def sites(client, study_id) do
+    resource(@sites, fn -> CastorEDC.Sites.stream_sites(client, study_id) end)
+  end
+
+  @doc """
+  The options of the study's option groups, a row per option.
+
+  Columns: `option_group_id`, `option_group_name`, `value` (what a data
+  point stores), `name` (what the user saw) and `order` (`{:s, 64}`, the
+  option's place in its group).
+  """
+  @spec option_groups(CastorEDC.client(), String.t()) :: {:ok, DataFrame.t()} | {:error, CastorEDC.Error.t()}
+  def option_groups(client, study_id) do
+    resource(@option_groups, fn ->
+      for group <- CastorEDC.OptionGroups.stream_option_groups(client, study_id), option <- group.options || [] do
+        %{
+          option_group_id: group.id,
+          option_group_name: group.name,
+          value: option.value,
+          name: option.name,
+          order: option.group_order
+        }
+      end
+    end)
+  end
+
+  defp resource(columns, rows) do
+    {:ok, rows.() |> Enum.to_list() |> Frame.from_rows(columns)}
+  rescue
+    error in CastorEDC.Error -> {:error, error}
+  end
+
+  defp value_type({list, of}), do: "#{list}(#{of})"
+  defp value_type(type), do: Atom.to_string(type)
+
+  defp flag(nil), do: nil
+  defp flag(value), do: value not in [0, false]
+
   defp long(client, study_id, opts) do
     client
     |> Tabular.data_points(study_id, opts)

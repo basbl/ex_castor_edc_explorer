@@ -43,8 +43,35 @@ defmodule CastorEDC.Explorer.Study do
         page("survey_forms", [%{"id" => "survey-form-1", "survey_form_name" => "Questions"}]),
       "/participant" =>
         page("participants", [
-          %{"participant_id" => "P1", "_embedded" => %{"site" => %{"id" => "site-1"}}},
-          %{"participant_id" => "P2", "_embedded" => %{"site" => %{"id" => "site-2"}}}
+          %{
+            "participant_id" => "P1",
+            "status" => "open",
+            "progress" => 100,
+            "locked" => false,
+            "archived" => false,
+            "randomization_group" => 2,
+            "created_on" => %{"date" => "2026-10-07 21:06:33.000000", "timezone" => "Europe/Amsterdam"},
+            "participant_status" => %{"id" => "ps-1", "name" => "Included"},
+            "_embedded" => %{"site" => %{"id" => "site-1", "name" => "Amsterdam"}}
+          },
+          %{"participant_id" => "P2", "progress" => 12.5, "_embedded" => %{"site" => %{"id" => "site-2"}}}
+        ]),
+      "/site" =>
+        page("sites", [
+          %{"id" => "site-1", "name" => "Amsterdam", "abbreviation" => "AMS", "country_id" => 169, "order" => 0},
+          %{"id" => "site-2", "name" => "Utrecht", "deleted" => true}
+        ]),
+      "/field-optiongroup" =>
+        page("fieldOptionGroups", [
+          %{
+            "id" => "og-sex",
+            "name" => "Sex",
+            "options" => [
+              %{"value" => "0", "name" => "Male", "groupOrder" => 0},
+              %{"value" => "1", "name" => "Female", "groupOrder" => 1}
+            ]
+          },
+          %{"id" => "og-empty", "name" => "Empty", "options" => []}
         ]),
       "/data-points/study" =>
         page("items", [
@@ -72,7 +99,13 @@ defmodule CastorEDC.Explorer.Study do
 
   defp fields do
     [
-      field("f-weight", "numeric", "form-1", 1),
+      field("f-weight", "numeric", "form-1", 1, %{
+        "field_required" => 1,
+        "field_hidden" => 0,
+        "field_units" => "kg",
+        "field_min" => 30,
+        "field_max" => 250.5
+      }),
       field("f-year", "year", "form-1", 2),
       field("f-visit", "date", "form-1", 3),
       field("f-seen", "datetime", "form-1", 4),

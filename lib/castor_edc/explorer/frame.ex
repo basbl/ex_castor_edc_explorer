@@ -17,7 +17,8 @@ defmodule CastorEDC.Explorer.Frame do
   end
 
   @doc false
-  # Columns from rows (maps), each column given as {name, key, dtype}.
+  # Columns from rows (maps or structs), each column given as {name, key,
+  # dtype}.
   @spec from_rows([map()], [{String.t(), term(), Series.dtype()}]) :: DataFrame.t()
   def from_rows(rows, columns) do
     new(for {name, key, dtype} <- columns, do: {name, dtype, Enum.map(rows, &cast(Map.get(&1, key), dtype))})
@@ -35,7 +36,11 @@ defmodule CastorEDC.Explorer.Frame do
   def cast(%Date{} = value, :date), do: value
   def cast(%Time{} = value, :time), do: value
   def cast(%NaiveDateTime{} = value, {:naive_datetime, _unit}), do: value
-  def cast(%DateTime{} = value, {:datetime, _unit, _zone}), do: value
+  # Explorer holds a column's datetimes in one zone; the API's come in the
+  # server's zone, so they're moved to UTC.
+  def cast(%DateTime{} = value, {:datetime, _unit, "Etc/UTC"}),
+    do: value |> DateTime.to_unix(:microsecond) |> DateTime.from_unix!(:microsecond)
+
   def cast(value, :boolean) when is_boolean(value), do: value
   def cast(value, :string), do: text(value)
   def cast(_value, _dtype), do: nil
