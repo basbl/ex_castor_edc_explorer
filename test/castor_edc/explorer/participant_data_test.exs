@@ -6,7 +6,7 @@ defmodule CastorEDC.Explorer.ParticipantDataTest do
   alias CastorEDC.Test
   alias Explorer.DataFrame
 
-  @bom "﻿"
+  @bom "\uFEFF"
 
   @study_csv @bom <>
                ~s("Participant Id";"Participant Status";"Site Abbreviation";"Participant Creation Date";weight;year;visit;seen;time;sex;"family#Renal disease";family#Deafness;note\n) <>
