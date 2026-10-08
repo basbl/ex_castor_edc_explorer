@@ -9,6 +9,7 @@ defmodule CastorEDC.Explorer.MixProject do
       app: :ex_castor_edc_explorer,
       version: @version,
       elixir: "~> 1.20",
+      elixirc_paths: elixirc_paths(Mix.env()),
       description: "Castor EDC study data as Explorer dataframes.",
       start_permanent: Mix.env() == :prod,
       test_coverage: [tool: ExCoveralls],
@@ -60,9 +61,14 @@ defmodule CastorEDC.Explorer.MixProject do
     ]
   end
 
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_env), do: ["lib"]
+
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
+      castor_edc(),
+      {:explorer, "~> 0.13.0"},
       {:excoveralls, "~> 0.18.5", only: :test},
       {:styler, "~> 1.12", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7.19", only: [:dev, :test], runtime: false},
@@ -70,6 +76,15 @@ defmodule CastorEDC.Explorer.MixProject do
       {:mix_audit, "~> 2.1.5", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40.4", only: :dev, runtime: false}
     ]
+  end
+
+  # CASTOR_EDC_PATH points at a checkout of ex_castor_edc, to develop both
+  # together; without it, the package builds on the released core.
+  defp castor_edc do
+    case System.get_env("CASTOR_EDC_PATH") do
+      blank when blank in [nil, ""] -> {:ex_castor_edc, "~> 1.0.0-rc.1"}
+      path -> {:ex_castor_edc, path: path}
+    end
   end
 
   defp aliases do
