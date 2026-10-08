@@ -15,6 +15,7 @@ defmodule CastorEDC.Explorer do
   """
 
   alias CastorEDC.Explorer.Frame
+  alias CastorEDC.Explorer.ParticipantData
   alias CastorEDC.Tabular
   alias Explorer.DataFrame
 
@@ -251,6 +252,59 @@ defmodule CastorEDC.Explorer do
         }
       end
     end)
+  end
+
+  @doc """
+  The study's data from a participant data export, as a `t:wide/0` map of
+  frames: one for the study's values, and one per repeating data and per
+  survey.
+
+  It runs `CastorEDC.Export.participant_data/3` in CSV, which takes a few
+  requests however big the study is, where `data_points/3` pages through
+  every value. The frames are typed by the export's own variable lists,
+  with the same dtypes per field type as `data_points/3` in the wide
+  format, and a checkbox's columns are named after its options' values
+  (`<variable>_<option value>`), as there.
+
+  The fixed columns come first, named in snake case: `participant_id`,
+  `participant_status`, `site_abbreviation` and `created_on` for the
+  study; `participant_id`, `participant_status`, `created_on`,
+  `instance_name` and `parent` for repeating data; `instance_id`,
+  `participant_id`, `participant_status`, `created_on`, `sent_on`,
+  `progress`, `completed_on`, `parent`, `survey_package_name` and
+  `survey_package_id` for surveys. Their times are
+  `{:naive_datetime, :microsecond}`, in the server's time zone.
+
+  The export writes values marked missing as -95 to -99 in numeric and
+  year fields and as the dates 1 January 2995 to 2999 in date fields;
+  they become nulls, and with `missing_columns: true` their codes go in a
+  `<variable>_missing` column of `{:s, 16}`. In other fields, and in
+  checkboxes, the export leaves them empty, so the frames can't tell them
+  from values never entered.
+
+  ## Options
+
+    * `:filters` - as for `CastorEDC.Export.participant_data/3`, such as
+      `site_ids: [...]`
+    * `:missing_columns` - add the missing-value columns; `false` by
+      default
+    * `:timeout` and `:poll_interval` - how long to wait for the export,
+      and how soon to check on it first, as for
+      `CastorEDC.Export.participant_data/3`
+  """
+  @spec participant_data(CastorEDC.client(), String.t(), keyword()) :: {:ok, wide()} | {:error, CastorEDC.Error.t()}
+  def participant_data(client, study_id, opts \\ []) do
+    {missing_columns, opts} = Keyword.pop(opts, :missing_columns, false)
+    export_opts = [format: :csv, unzip: true] ++ Keyword.take(opts, [:filters, :timeout, :poll_interval])
+
+    with {:ok, export} <- CastorEDC.Export.participant_data(client, study_id, export_opts) do
+      repeating_data = Enum.map(CastorEDC.RepeatingData.stream_repeating_data(client, study_id), & &1.name)
+      surveys = Enum.map(CastorEDC.Surveys.stream_surveys(client, study_id), & &1.name)
+
+      {:ok, ParticipantData.read(export.files, repeating_data, surveys, missing_columns)}
+    end
+  rescue
+    error in CastorEDC.Error -> {:error, error}
   end
 
   defp resource(columns, rows) do
