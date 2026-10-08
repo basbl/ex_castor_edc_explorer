@@ -66,7 +66,7 @@ defmodule CastorEDC.Explorer do
   values, with a row per participant, and one for each repeating data and
   survey, with a row per instance. After `participant_id` and `site_id`
   (and `instance_id` for repeating data and surveys) comes a column per
-  variable, typed by its field:
+  variable, in the order the study shows them, typed by its field:
 
   | Field type | Dtype |
   | --- | --- |
@@ -166,7 +166,7 @@ defmodule CastorEDC.Explorer do
 
     variables =
       columns
-      |> Enum.sort_by(&{&1.form_name || "", &1.field.field_number || 0, variable_name(&1)})
+      |> Enum.sort_by(&{&1.position, variable_name(&1)})
       |> Enum.flat_map(&variable_columns(&1, missing_columns))
 
     rows = Enum.sort_by(rows, &{&1.participant_id, &1.instance_id})
