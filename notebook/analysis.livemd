@@ -1,0 +1,107 @@
+# Analysing a Castor EDC study with Explorer
+
+```elixir
+Mix.install([
+  {:ex_castor_edc_explorer, "~> 0.1.0"},
+  {:kino_explorer, "~> 0.1.25"}
+])
+```
+
+## Introduction
+
+This notebook loads a study's data into Explorer dataframes and takes a first look at it.
+Every frame's dtypes come from the study's structure, not from the values it happens to hold.
+
+## Connecting
+
+You need a client ID and a client secret, which you can create on your [account settings page](https://data.castoredc.com/account/settings), and the ID of a study they have access to.
+
+```elixir
+regions = [
+  {"https://data.castoredc.com", "NL"},
+  {"https://uk.castoredc.com", "UK"},
+  {"https://us.castoredc.com", "US"},
+  {"https://au.castoredc.com", "AU"}
+]
+
+region = Kino.Input.select("Region", regions) |> Kino.render()
+client_id = Kino.Input.text("Client ID") |> Kino.render()
+client_secret = Kino.Input.password("Client secret") |> Kino.render()
+study_id = Kino.Input.text("Study ID") |> Kino.render()
+
+Kino.nothing()
+```
+
+Explorer's queries, such as `filter` and `summarise`, are macros, so the notebook requires `Explorer.DataFrame` once.
+
+```elixir
+require Explorer.DataFrame
+
+client =
+  CastorEDC.new(
+    client_id: Kino.Input.read(client_id),
+    client_secret: Kino.Input.read(client_secret),
+    base_url: Kino.Input.read(region)
+  )
+
+study_id = Kino.Input.read(study_id)
+```
+
+## The study's structure
+
+`fields/2` has a row per field that holds values, in the order the study shows them: where it collects data, its type, and its option group.
+
+```elixir
+{:ok, fields} = CastorEDC.Explorer.fields(client, study_id)
+fields
+```
+
+`option_groups/2` has a row per option, to join on `option_group_id`.
+
+```elixir
+{:ok, options} = CastorEDC.Explorer.option_groups(client, study_id)
+options
+```
+
+## Participants and sites
+
+```elixir
+{:ok, participants} = CastorEDC.Explorer.participants(client, study_id)
+{:ok, sites} = CastorEDC.Explorer.sites(client, study_id)
+
+participants
+|> Explorer.DataFrame.join(Explorer.DataFrame.select(sites, ["site_id", "name"]), on: "site_id", how: :left)
+|> Explorer.DataFrame.group_by("name")
+|> Explorer.DataFrame.summarise(participants: count(participant_id), mean_progress: mean(progress))
+```
+
+## Collected data
+
+`participant_data/3` runs a batch export and reads it: a frame for the study's values, with a row per participant, and one for each repeating data and survey, with a row per instance.
+It takes a few requests, however big the study is.
+
+```elixir
+{:ok, %{study: study, repeating_data: repeating_data, surveys: surveys}} =
+  CastorEDC.Explorer.participant_data(client, study_id, missing_columns: true)
+
+study
+```
+
+Values marked missing are nulls, with their codes (95 to 99) in the `<variable>_missing` columns.
+
+```elixir
+Map.keys(repeating_data) ++ Map.keys(surveys)
+```
+
+`data_points/3` reads the same values through the API instead, page by page, with a row per value, which suits filtering and pivoting:
+
+```elixir
+{:ok, values} = CastorEDC.Explorer.data_points(client, study_id)
+
+values
+|> Explorer.DataFrame.filter(not is_nil(missing))
+|> Explorer.DataFrame.group_by(["variable_name", "missing"])
+|> Explorer.DataFrame.summarise(count: count(participant_id))
+```
+
+With `format: :wide`, it gives the same shape as `participant_data/3`, with a column per variable.
