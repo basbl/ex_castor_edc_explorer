@@ -1,5 +1,7 @@
 # CastorEDC.Explorer
 
+[![Package](https://img.shields.io/hexpm/v/ex_castor_edc_explorer.svg)](https://hex.pm/packages/ex_castor_edc_explorer) [![Documentation](http://img.shields.io/badge/hex.pm-docs-green.svg?style=flat)](https://hexdocs.pm/ex_castor_edc_explorer) ![CI](https://github.com/basbl/ex_castor_edc_explorer/actions/workflows/ci.yml/badge.svg)
+
 Castor EDC study data as [Explorer](https://hexdocs.pm/explorer) dataframes.
 
 It builds on [ex_castor_edc](https://hexdocs.pm/ex_castor_edc), and takes every frame's dtypes from the study's structure instead of inferring them from the data.
