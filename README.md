@@ -2,7 +2,7 @@
 
 Castor EDC study data as [Explorer](https://hexdocs.pm/explorer) dataframes.
 
-It builds on [ex_castor_edc](https://github.com/basbl/ex_castor_edc), and takes every frame's dtypes from the study's structure instead of inferring them from the data.
+It builds on [ex_castor_edc](https://hexdocs.pm/ex_castor_edc), and takes every frame's dtypes from the study's structure instead of inferring them from the data.
 
 ## Installation
 
@@ -36,3 +36,11 @@ client = CastorEDC.new(client_id: "...", client_secret: "...")
 {:ok, sites} = CastorEDC.Explorer.sites(client, study_id)
 {:ok, options} = CastorEDC.Explorer.option_groups(client, study_id)
 ```
+
+## Contributing
+
+See [CONTRIBUTING.md](https://github.com/basbl/ex_castor_edc_explorer/blob/main/CONTRIBUTING.md).
+
+## License
+
+MIT; see [LICENSE.md](https://github.com/basbl/ex_castor_edc_explorer/blob/main/LICENSE.md).
