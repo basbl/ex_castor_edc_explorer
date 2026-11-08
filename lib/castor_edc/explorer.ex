@@ -431,20 +431,55 @@ defmodule CastorEDC.Explorer do
     * `:timeout` and `:poll_interval` - how long to wait for the export,
       and how soon to check on it first, as for
       `CastorEDC.Export.participant_data/3`
+    * `:from` - read an export already made instead of running one: the
+      `CastorEDC.Export` struct that `CastorEDC.Export.download/4` or
+      `CastorEDC.Export.participant_data/3` returned, whether it holds the zip in memory, saved it with `:into`
+      or unzipped it, or the path to such a zip or to the directory it was
+      unzipped into. The client still fetches the names of the study's
+      repeating data and surveys, to key their frames by. It can't be
+      combined with the options above that run the export, and raises
+      `ArgumentError` for an export that isn't a participant data export
+      in CSV, hasn't been downloaded, or doesn't unzip.
+
+  ## Examples
+
+      {:ok, export} = CastorEDC.Export.download(client, study_id, export)
+      {:ok, frames} = CastorEDC.Explorer.participant_data(client, study_id, from: export)
+
+      {:ok, frames} = CastorEDC.Explorer.participant_data(client, study_id, from: "exports/study.zip")
   """
   @spec participant_data(CastorEDC.client(), String.t(), keyword()) :: {:ok, wide()} | {:error, CastorEDC.Error.t()}
   def participant_data(client, study_id, opts \\ []) do
     {missing_columns, opts} = Keyword.pop(opts, :missing_columns, false)
-    export_opts = [format: :csv, unzip: true] ++ Keyword.take(opts, [:filters, :timeout, :poll_interval])
+    {from, opts} = Keyword.pop(opts, :from)
 
-    with {:ok, export} <- CastorEDC.Export.participant_data(client, study_id, export_opts) do
+    with {:ok, files} <- export_files(client, study_id, from, opts) do
       repeating_data = Enum.map(CastorEDC.RepeatingData.stream_repeating_data(client, study_id), & &1.name)
       surveys = Enum.map(CastorEDC.Surveys.stream_surveys(client, study_id), & &1.name)
 
-      {:ok, ParticipantData.read(export.files, repeating_data, surveys, missing_columns)}
+      {:ok, ParticipantData.read(files, repeating_data, surveys, missing_columns)}
     end
   rescue
     error in CastorEDC.Error -> {:error, error}
+  end
+
+  @export_options [:filters, :timeout, :poll_interval]
+
+  # The export's files as {name, contents}, from a new export or the one
+  # given as :from.
+  defp export_files(client, study_id, nil, opts) do
+    export_opts = [format: :csv, unzip: true] ++ Keyword.take(opts, @export_options)
+
+    with {:ok, export} <- CastorEDC.Export.participant_data(client, study_id, export_opts) do
+      {:ok, ParticipantData.contents(export.files)}
+    end
+  end
+
+  defp export_files(_client, _study_id, from, opts) do
+    case Keyword.take(opts, @export_options) do
+      [] -> {:ok, ParticipantData.files(from)}
+      given -> raise ArgumentError, ":from reads an export already made, so it takes no #{inspect(Keyword.keys(given))}"
+    end
   end
 
   defp resource(columns, rows) do

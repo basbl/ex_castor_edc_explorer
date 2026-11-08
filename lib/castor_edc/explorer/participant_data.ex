@@ -37,6 +37,46 @@ defmodule CastorEDC.Explorer.ParticipantData do
   @missing_dates Map.new(95..99, &{"01-01-29#{&1}", &1})
 
   @doc false
+  # The files of an export already made, as {name, contents}: from a
+  # CastorEDC.Export struct holding the zip in memory, its saved path or its
+  # unzipped files, or from the path to a zip or to the directory it was
+  # unzipped into.
+  @spec files(CastorEDC.Export.t() | Path.t()) :: [{String.t(), binary()}]
+  def files(%CastorEDC.Export{type: type, format: format}) when type != :participant_data or format != :csv,
+    do: raise(ArgumentError, "expected a participant data export in CSV, got #{inspect(type)} in #{inspect(format)}")
+
+  def files(%CastorEDC.Export{files: [_file | _more] = files}), do: contents(files)
+  def files(%CastorEDC.Export{data: data}) when is_binary(data), do: unzip(data)
+  def files(%CastorEDC.Export{path: path}) when is_binary(path), do: files(path)
+
+  def files(%CastorEDC.Export{id: id}),
+    do: raise(ArgumentError, "export #{id} hasn't been downloaded; download it, or pass the path it was saved to")
+
+  def files(path) when is_binary(path) do
+    if File.dir?(path),
+      do: path |> Path.join("*.csv") |> Path.wildcard() |> contents(),
+      else: path |> File.read!() |> unzip()
+  end
+
+  @doc false
+  # Unzipped files, given as paths or as {name, contents}, as {name,
+  # contents}.
+  @spec contents([Path.t() | {String.t(), binary()}]) :: [{String.t(), binary()}]
+  def contents(files) do
+    Enum.map(files, fn
+      {name, contents} -> {to_string(name), contents}
+      path -> {path, File.read!(path)}
+    end)
+  end
+
+  defp unzip(zip) do
+    case :zip.unzip(zip, [:memory]) do
+      {:ok, entries} -> contents(entries)
+      {:error, reason} -> raise ArgumentError, "couldn't unzip the export: #{inspect(reason)}"
+    end
+  end
+
+  @doc false
   # The frames of the export's files, given as {name, contents}, with the
   # names of the study's repeating data and surveys.
   @spec read([{String.t(), binary()}], [String.t()], [String.t()], boolean()) :: CastorEDC.Explorer.wide()
