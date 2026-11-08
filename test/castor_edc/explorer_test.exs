@@ -2,6 +2,7 @@ defmodule CastorEDC.ExplorerTest do
   use ExUnit.Case, async: true
 
   alias CastorEDC.Explorer.Study
+  alias CastorEDC.Model.Country
   alias Explorer.DataFrame
 
   describe "data_points/3" do
@@ -374,6 +375,99 @@ defmodule CastorEDC.ExplorerTest do
       assert {:ok, frame} = CastorEDC.Explorer.queries(client, Study.id())
       assert DataFrame.n_rows(frame) == 0
       assert DataFrame.dtypes(frame)["created_on"] == {:datetime, :microsecond, "Etc/UTC"}
+    end
+  end
+
+  describe "from_structs/1" do
+    test "gives a row per struct, a column per plain field" do
+      countries = [
+        Country.new(%{"id" => 169, "country_name" => "Netherlands", "country_cca2" => "NL"}),
+        Country.new(%{"id" => 233, "country_name" => "United States", "unknown" => "kept in extra"})
+      ]
+
+      frame = CastorEDC.Explorer.from_structs(countries)
+
+      assert DataFrame.names(frame) == ~w(country_cca2 country_cca3 country_id country_name country_tld id)
+
+      assert DataFrame.dtypes(frame) == %{
+               "country_cca2" => :string,
+               "country_cca3" => :null,
+               "country_id" => :null,
+               "country_name" => :string,
+               "country_tld" => :null,
+               "id" => {:s, 64}
+             }
+
+      assert DataFrame.to_columns(frame)["country_name"] == ["Netherlands", "United States"]
+    end
+
+    test "reads a page, or a stream of the client's" do
+      page = %CastorEDC.Page{entries: [%{name: "a"}, %{name: "b"}]}
+      assert DataFrame.to_columns(CastorEDC.Explorer.from_structs(page)) == %{"name" => ["a", "b"]}
+
+      frame = Study.client() |> CastorEDC.Sites.stream_sites(Study.id()) |> CastorEDC.Explorer.from_structs()
+      assert DataFrame.to_columns(frame)["abbreviation"] == ["AMS", nil]
+      assert DataFrame.dtypes(frame)["deleted"] == :boolean
+    end
+
+    test "infers the dtypes from the values, leaving nested objects and lists out" do
+      rows = [
+        %{
+          text: "a",
+          count: 1,
+          share: 0.5,
+          mixed_number: 1,
+          flag: true,
+          day: ~D[2026-11-08],
+          at: ~T[12:30:00],
+          local: ~N[2026-11-08 12:30:00],
+          utc: DateTime.new!(~D[2026-11-08], ~T[12:30:00], "Etc/UTC"),
+          status: :open,
+          mixed: "1",
+          site: %{id: "site-1"},
+          tags: ["x"]
+        },
+        %{mixed_number: 2.5, mixed: 2, status: nil}
+      ]
+
+      frame = CastorEDC.Explorer.from_structs(rows)
+
+      assert DataFrame.dtypes(frame) == %{
+               "text" => :string,
+               "count" => {:s, 64},
+               "share" => {:f, 64},
+               "mixed_number" => {:f, 64},
+               "flag" => :boolean,
+               "day" => :date,
+               "at" => :time,
+               "local" => {:naive_datetime, :microsecond},
+               "utc" => {:datetime, :microsecond, "Etc/UTC"},
+               "status" => :string,
+               "mixed" => :string
+             }
+
+      assert %{"mixed" => ["1", "2"], "mixed_number" => [1.0, 2.5], "status" => ["open", nil]} =
+               DataFrame.to_columns(frame)
+    end
+
+    test "moves datetimes to UTC" do
+      local = DateTime.new!(~D[2026-11-08], ~T[12:30:00], "Europe/Amsterdam", Tz.TimeZoneDatabase)
+
+      assert DataFrame.to_columns(CastorEDC.Explorer.from_structs([%{at: local}])) == %{
+               "at" => [~U[2026-11-08 11:30:00.000000Z]]
+             }
+    end
+
+    test "gives an empty frame for no structs" do
+      assert DataFrame.names(CastorEDC.Explorer.from_structs([])) == []
+    end
+
+    test "raises the error of a stream whose request fails" do
+      client = Study.client(%{"/site" => CastorEDC.Test.json(%{"detail" => "Forbidden"}, status: 403)})
+
+      assert_raise CastorEDC.Error, fn ->
+        client |> CastorEDC.Sites.stream_sites(Study.id()) |> CastorEDC.Explorer.from_structs()
+      end
     end
   end
 end

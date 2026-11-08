@@ -463,6 +463,83 @@ defmodule CastorEDC.Explorer do
     error in CastorEDC.Error -> {:error, error}
   end
 
+  @doc """
+  A frame from any of the client's results: a list, `CastorEDC.Page` or
+  stream of structs (or maps), a row each, for resources this module has
+  no function of its own for.
+
+      CastorEDC.Countries.list_countries!(client) |> CastorEDC.Explorer.from_structs()
+      CastorEDC.Visits.stream_visits(client, study_id) |> CastorEDC.Explorer.from_structs()
+
+  Each field holding a plain value becomes a column named after it, in
+  alphabetical order, as the client's structs define their fields. Fields holding a nested object or a list,
+  such as a participant's `site`, are left out, as is the `extra` map;
+  take those from the structs yourself.
+
+  Unlike the other functions, the dtypes are inferred from the values, as
+  nothing else describes them: `:string` for text, `{:s, 64}` for
+  integers, `{:f, 64}` for floats (and integers mixed with them),
+  `:boolean`, `:date`, `:time`, `{:naive_datetime, :microsecond}`, and
+  `{:datetime, :microsecond, "Etc/UTC"}` for `DateTime`s, which are moved
+  to UTC. A column whose values are of different kinds becomes `:string`,
+  and one without any values `:null`. An empty list gives an empty frame
+  without columns.
+
+  Returns the frame, and raises the `CastorEDC.Error` of a stream whose
+  request fails.
+  """
+  @spec from_structs(Enumerable.t() | CastorEDC.Page.t()) :: DataFrame.t()
+  def from_structs(%CastorEDC.Page{entries: entries}), do: from_structs(entries)
+
+  def from_structs(structs) do
+    rows = Enum.to_list(structs)
+
+    rows
+    |> keys()
+    |> Enum.flat_map(fn key -> struct_column(key, Enum.map(rows, &Map.get(&1, key))) end)
+    |> Frame.new()
+  end
+
+  # The rows' keys, sorted, without a struct's own and its extra map.
+  defp keys(rows) do
+    rows |> Enum.flat_map(&Map.keys/1) |> Enum.uniq() |> Kernel.--([:__struct__, :extra]) |> Enum.sort()
+  end
+
+  defp struct_column(key, values) do
+    case values |> Enum.reject(&is_nil/1) |> Enum.map(&kind/1) |> Enum.uniq() do
+      [] ->
+        [{to_string(key), :null, values}]
+
+      kinds ->
+        if :nested in kinds,
+          do: [],
+          else: [{to_string(key), inferred_dtype(kinds), cast_all(values, inferred_dtype(kinds))}]
+    end
+  end
+
+  defp kind(value) when is_binary(value) or (is_atom(value) and not is_boolean(value)), do: :string
+  defp kind(value) when is_boolean(value), do: :boolean
+  defp kind(value) when is_integer(value), do: :integer
+  defp kind(value) when is_float(value), do: :float
+  defp kind(%Date{}), do: :date
+  defp kind(%Time{}), do: :time
+  defp kind(%NaiveDateTime{}), do: :naive_datetime
+  defp kind(%DateTime{}), do: :datetime
+  defp kind(_value), do: :nested
+
+  defp inferred_dtype([:string]), do: :string
+  defp inferred_dtype([:boolean]), do: :boolean
+  defp inferred_dtype([:integer]), do: {:s, 64}
+  defp inferred_dtype(kinds) when kinds in [[:float], [:integer, :float], [:float, :integer]], do: {:f, 64}
+  defp inferred_dtype([:date]), do: :date
+  defp inferred_dtype([:time]), do: :time
+  defp inferred_dtype([:naive_datetime]), do: {:naive_datetime, :microsecond}
+  defp inferred_dtype([:datetime]), do: @datetime
+  defp inferred_dtype(_mixed), do: :string
+
+  defp cast_all(values, :string), do: Enum.map(values, &Frame.text/1)
+  defp cast_all(values, dtype), do: Enum.map(values, &Frame.cast(&1, dtype))
+
   @export_options [:filters, :timeout, :poll_interval]
 
   # The export's files as {name, contents}, from a new export or the one
