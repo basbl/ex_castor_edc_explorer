@@ -1,0 +1,313 @@
+# Charting a Castor EDC study with Explorer and VegaLite
+
+```elixir
+# To use checkouts instead of the published packages, set
+# CASTOR_EDC_EXPLORER_PATH, CASTOR_EDC_KINO_PATH and CASTOR_EDC_PATH.
+explorer = System.get_env("CASTOR_EDC_EXPLORER_PATH")
+kino = System.get_env("CASTOR_EDC_KINO_PATH")
+core = System.get_env("CASTOR_EDC_PATH")
+
+Mix.install(
+  [
+    if(explorer,
+      do: {:ex_castor_edc_explorer, path: explorer},
+      else: {:ex_castor_edc_explorer, "~> 0.1.0"}
+    ),
+    if(kino, do: {:ex_castor_edc_kino, path: kino}, else: {:ex_castor_edc_kino, "~> 0.1.0"}),
+    {:kino_explorer, "~> 0.1.25"},
+    {:kino_vega_lite, "~> 0.1.13"}
+  ] ++ if(core, do: [{:ex_castor_edc, path: core, override: true}], else: [])
+)
+```
+
+## Introduction
+
+This notebook draws the charts a study usually needs: how enrolment is going, how complete and how missing the data is, how the surveys and queries stand, and how one variable is spread.
+Each chart is a few lines of Explorer to shape a frame, and a VegaLite spec to draw it; change them to suit your study.
+
+## Connecting
+
+Add your API credentials as Livebook secrets: `CASTOR_EDC_CLIENT_ID` and `CASTOR_EDC_CLIENT_SECRET`, which you can create on your [account settings page](https://data.castoredc.com/account/settings).
+The connection cell below reads them from there, so they never appear in the notebook: pick the server your studies are on, and test the connection.
+
+<!-- livebook:{"attrs":"eyJhY2Nlc3NfdG9rZW5fc2VjcmV0IjoiQ0FTVE9SX0VEQ19BQ0NFU1NfVE9LRU4iLCJhdXRoIjoiY3JlZGVudGlhbHMiLCJjbGllbnRfaWRfc2VjcmV0IjoiQ0FTVE9SX0VEQ19DTElFTlRfSUQiLCJjbGllbnRfc2VjcmV0X3NlY3JldCI6IkNBU1RPUl9FRENfQ0xJRU5UX1NFQ1JFVCIsImN1c3RvbV9zZXJ2ZXIiOiIiLCJzZXJ2ZXIiOiJodHRwczovL2RhdGEuY2FzdG9yZWRjLmNvbSIsInZhcmlhYmxlIjoiY2xpZW50In0","chunks":null,"kind":"Elixir.CastorEDC.Kino.ConnectionCell","livebook_object":"smart_cell"} -->
+
+```elixir
+client =
+  CastorEDC.new(
+    client_id: System.fetch_env!("LB_CASTOR_EDC_CLIENT_ID"),
+    client_secret: System.fetch_env!("LB_CASTOR_EDC_CLIENT_SECRET"),
+    base_url: "https://data.castoredc.com"
+  )
+```
+
+Then pick the study to chart; the cell lists the studies the client can reach.
+
+<!-- livebook:{"attrs":"eyJjbGllbnQiOiJjbGllbnQiLCJzdHVkeV9pZCI6IiIsInN0dWR5X25hbWUiOiIiLCJ2YXJpYWJsZSI6InN0dWR5X2lkIn0","chunks":null,"kind":"Elixir.CastorEDC.Kino.StudyCell","livebook_object":"smart_cell"} -->
+
+```elixir
+
+```
+
+## Loading the study
+
+Explorer's queries are macros, so the notebook requires `Explorer.DataFrame` once, and gives it and VegaLite short names.
+`chart` starts every chart with the same look: a fixed order of colours for categories, which tells them apart for colour-blind readers too, and a quiet grid.
+
+```elixir
+require Explorer.DataFrame, as: DF
+alias VegaLite, as: Vl
+
+palette = ~w(#2a78d6 #eb6834 #1baf7a #eda100 #e87ba4 #008300 #6250d6 #e34948)
+
+chart = fn opts ->
+  Vl.new(Keyword.merge([width: 600, height: 260], opts))
+  |> Vl.config(
+    range: [category: palette],
+    view: [stroke: nil],
+    axis: [
+      grid_color: "#e6e5e0",
+      domain_color: "#a8a7a2",
+      tick_color: "#a8a7a2",
+      label_color: "#52514e",
+      title_color: "#52514e",
+      label_limit: 320
+    ],
+    legend: [label_color: "#52514e", title_color: "#52514e"]
+  )
+end
+```
+
+The study's structure, participants and values, with the options' names next to their values:
+
+```elixir
+{:ok, fields} = CastorEDC.Explorer.fields(client, study_id)
+{:ok, participants} = CastorEDC.Explorer.participants(client, study_id)
+{:ok, values} = CastorEDC.Explorer.data_points(client, study_id, labels: true)
+
+values =
+  DF.join(values, DF.select(fields, ["field_id", "parent_name", "form_name", "field_type"]), on: "field_id", how: :left)
+
+Kino.Markdown.new("#{DF.n_rows(participants)} participants, #{DF.n_rows(fields)} fields, #{DF.n_rows(values)} values.")
+```
+
+## Enrolment
+
+How many participants each site had enrolled by each day, as a step for every participant created:
+
+```elixir
+enrolment =
+  participants
+  |> DF.mutate(day: cast(created_on, :date), site: fill_missing(site_name, "No site"))
+  |> DF.group_by(["site", "day"])
+  |> DF.summarise(enrolled: count(participant_id))
+  |> DF.sort_by(asc: day)
+  |> DF.group_by("site")
+  |> DF.mutate(enrolled: cumulative_sum(enrolled))
+  |> DF.ungroup()
+
+chart.(title: "Participants enrolled")
+|> Vl.data_from_values(enrolment)
+|> Vl.mark(:line, interpolate: "step-after", stroke_width: 2, point: [size: 30, filled: true])
+|> Vl.encode_field(:x, "day", type: :temporal, title: nil)
+|> Vl.encode_field(:y, "enrolled", type: :quantitative, title: "Participants")
+|> Vl.encode_field(:color, "site", type: :nominal, title: "Site")
+|> Vl.encode(:tooltip, [[field: "site", title: "Site"], [field: "day", type: :temporal], [field: "enrolled", title: "Enrolled"]])
+```
+
+How far each participant has got through their forms:
+
+```elixir
+chart.(title: "Progress per participant", height: 200)
+|> Vl.data_from_values(DF.select(participants, ["progress"]))
+|> Vl.mark(:bar, corner_radius_top_left: 4, corner_radius_top_right: 4, tooltip: true)
+|> Vl.encode_field(:x, "progress", type: :quantitative, bin: [step: 10, extent: [0, 100]], title: "Progress (%)")
+|> Vl.encode(:y, aggregate: :count, type: :quantitative, title: "Participants", axis: [tick_min_step: 1])
+|> Vl.encode(:color, value: hd(palette))
+```
+
+## Completeness
+
+The share of participants with a value, or a value marked missing, for each of the study's own fields, averaged per form.
+Forms of visits a participant hasn't reached yet count as incomplete.
+
+```elixir
+participant_count = max(DF.n_rows(participants), 1)
+
+entered =
+  values
+  |> DF.filter(source == "study" and (not is_nil(value) or not is_nil(missing)))
+  |> DF.group_by("field_id")
+  |> DF.summarise(entered: n_distinct(participant_id))
+
+completeness =
+  fields
+  |> DF.filter(context == "study")
+  |> DF.join(entered, on: "field_id", how: :left)
+  |> DF.mutate(complete: fill_missing(entered, 0) / ^participant_count)
+  |> DF.group_by(["parent_name", "form_name"])
+  |> DF.summarise(complete: mean(complete), fields: count(field_id))
+  |> DF.mutate(form: parent_name <> " / " <> form_name)
+
+chart.(title: "Mean completeness per form", height: [step: 22])
+|> Vl.data_from_values(completeness)
+|> Vl.mark(:bar, corner_radius_end: 4, tooltip: true)
+|> Vl.encode_field(:y, "form", type: :nominal, sort: "-x", title: nil)
+|> Vl.encode_field(:x, "complete", type: :quantitative, axis: [format: "%"], scale: [domain: [0, 1]], title: nil)
+|> Vl.encode(:color, value: hd(palette))
+```
+
+## Missing data
+
+Values marked missing, per form and by their reason.
+
+```elixir
+reasons =
+  DF.new(
+    missing: [95, 96, 97, 98, 99],
+    reason: ["Measurement failed", "Not applicable", "Not asked", "Asked but unknown", "Not done"]
+  )
+  |> DF.mutate(missing: cast(missing, {:s, 16}))
+
+missing =
+  values
+  |> DF.filter(not is_nil(missing))
+  |> DF.join(reasons, on: "missing")
+  |> DF.mutate(form: fill_missing(form_name, "Other"))
+  |> DF.group_by(["form", "reason", "missing"])
+  |> DF.summarise(values: count(field_id))
+
+if DF.n_rows(missing) == 0 do
+  Kino.Markdown.new("No values are marked missing.")
+else
+  chart.(title: "Values marked missing, per form", height: [step: 22])
+  |> Vl.data_from_values(missing)
+  |> Vl.mark(:bar, stroke: "white", stroke_width: 2, tooltip: true)
+  |> Vl.encode_field(:y, "form", type: :nominal, sort: "-x", title: nil)
+  |> Vl.encode_field(:x, "values", type: :quantitative, aggregate: :sum, title: "Values")
+  |> Vl.encode_field(:color, "reason", type: :nominal, title: "Reason", sort: ["Measurement failed", "Not applicable", "Not asked", "Asked but unknown", "Not done"])
+  |> Vl.encode_field(:order, "missing", type: :quantitative)
+end
+```
+
+## Data entry
+
+How many values were last changed in each week, for the study's own forms and its repeating data and surveys:
+
+```elixir
+activity =
+  values
+  |> DF.filter(not is_nil(updated_on))
+  |> DF.mutate(day: cast(updated_on, :date))
+  |> DF.group_by(["day", "source"])
+  |> DF.summarise(values: count(field_id))
+
+chart.(title: "Values changed per week")
+|> Vl.data_from_values(activity)
+|> Vl.mark(:bar, stroke: "white", stroke_width: 1, tooltip: true)
+|> Vl.encode_field(:x, "day", type: :temporal, time_unit: :yearweek, title: nil)
+|> Vl.encode_field(:y, "values", type: :quantitative, aggregate: :sum, title: "Values")
+|> Vl.encode_field(:color, "source", type: :nominal, title: "Source", sort: ["study", "repeating_data", "survey"])
+```
+
+## Surveys
+
+Where each survey package stands for the participants it was sent to:
+
+```elixir
+{:ok, packages} = CastorEDC.Explorer.survey_package_instances(client, study_id)
+
+if DF.n_rows(packages) == 0 do
+  Kino.Markdown.new("No survey packages have been sent.")
+else
+  chart.(title: "Survey packages by status", height: [step: 28])
+  |> Vl.data_from_values(DF.select(packages, ["survey_package_name", "status", "progress"]))
+  |> Vl.mark(:bar, stroke: "white", stroke_width: 2, tooltip: true)
+  |> Vl.encode_field(:y, "survey_package_name", type: :nominal, title: nil)
+  |> Vl.encode(:x, aggregate: :count, type: :quantitative, title: "Instances", axis: [tick_min_step: 1])
+  |> Vl.encode_field(:color, "status", type: :nominal, title: "Status")
+end
+```
+
+## Queries
+
+The queries raised on the study's values, by status:
+
+```elixir
+{:ok, queries} = CastorEDC.Explorer.queries(client, study_id)
+
+if DF.n_rows(queries) == 0 do
+  Kino.Markdown.new("No queries have been raised.")
+else
+  chart.(title: "Queries by status", height: [step: 28])
+  |> Vl.data_from_values(DF.select(queries, ["status"]))
+  |> Vl.mark(:bar, corner_radius_end: 4, tooltip: true)
+  |> Vl.encode_field(:y, "status", type: :nominal, sort: "-x", title: nil)
+  |> Vl.encode(:x, aggregate: :count, type: :quantitative, title: "Queries", axis: [tick_min_step: 1])
+  |> Vl.encode(:color, value: hd(palette))
+end
+```
+
+## One variable
+
+Pick a numeric field to see its values per site as box plots, or an option field to see how often each option was chosen, by name.
+The box spans the middle half of the values, the line in it is the median, and dots are the values far outside the rest.
+
+```elixir
+site_names = DF.select(participants, ["participant_id", "site_name"])
+
+variables =
+  fields
+  |> DF.filter(value_type == "number" or field_type in ["radio", "dropdown", "checkbox"])
+  |> DF.pull("variable_name")
+  |> Explorer.Series.to_list()
+
+distribution = fn variable ->
+  rows = DF.filter(values, variable_name == ^variable and not is_nil(value))
+  numeric? = DF.n_rows(DF.filter(fields, variable_name == ^variable and value_type == "number")) > 0
+
+  cond do
+    DF.n_rows(rows) == 0 ->
+      Kino.Markdown.new("#{variable} has no values yet.")
+
+    numeric? ->
+      chart.(title: variable, height: [step: 40])
+      |> Vl.data_from_values(
+        rows
+        |> DF.join(site_names, on: "participant_id", how: :left)
+        |> DF.mutate(number: cast(value, {:f, 64}), site: fill_missing(site_name, "No site"))
+        |> DF.select(["site", "number", "participant_id"])
+      )
+      |> Vl.mark(:boxplot, extent: 1.5, size: 24, median: [color: "white"], outliers: [size: 30])
+      |> Vl.encode_field(:y, "site", type: :nominal, title: nil)
+      |> Vl.encode_field(:x, "number", type: :quantitative, title: variable, scale: [zero: false])
+      |> Vl.encode_field(:color, "site", type: :nominal, legend: nil)
+
+    true ->
+      # A checkbox's label holds every checked option's name, `;` between them.
+      chosen =
+        rows
+        |> DF.pull("label")
+        |> Explorer.Series.to_list()
+        |> Enum.flat_map(&String.split(&1, ";"))
+        |> Enum.frequencies()
+        |> Enum.map(fn {option, count} -> %{"option" => option, "values" => count} end)
+
+      chart.(title: variable, height: [step: 22])
+      |> Vl.data_from_values(chosen)
+      |> Vl.mark(:bar, corner_radius_end: 4, tooltip: true)
+      |> Vl.encode_field(:y, "option", type: :nominal, sort: "-x", title: nil)
+      |> Vl.encode_field(:x, "values", type: :quantitative, title: "Values", axis: [tick_min_step: 1])
+      |> Vl.encode(:color, value: hd(palette))
+  end
+end
+
+picker = Kino.Input.select("Field", Enum.map(variables, &{&1, &1}))
+frame = Kino.Frame.new()
+
+# The picker starts on the first field; it can't be read before it's rendered.
+Kino.Frame.render(frame, distribution.(hd(variables)))
+Kino.listen(picker, fn event -> Kino.Frame.render(frame, distribution.(event.value)) end)
+
+Kino.Layout.grid([picker, frame])
+```
