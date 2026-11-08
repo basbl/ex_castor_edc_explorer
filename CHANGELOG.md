@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `CastorEDC.Explorer.survey_package_instances/2`, `repeating_data_instances/2` and `queries/2` give those resources as frames, a row each, with fixed dtypes.
   A survey package instance's `parent_type` is named (`"visit"` or `"repeating_data_instance"`) instead of the API's code, and a query's `remarks` counts its remarks.
+- `CastorEDC.Explorer.domains/3` reads a participant data export grouped by domain into a frame per domain, with a row per participant per visit, repeating data instance or survey, typed by the domain's variable list, and the codes of missing values and the options' names in columns of their own when asked.
+  It takes `from:` as `participant_data/3` does, which now refuses a grouped export.
 - `from:` on `CastorEDC.Explorer.participant_data/3` reads an export already made instead of running one: the `CastorEDC.Export` struct a download returned (in memory, saved or unzipped), or the path to its zip or the directory it was unzipped into.
 - `CastorEDC.Explorer.from_structs/1` makes a frame from any of the client's results, a list, page or stream of structs, for resources without a function of their own, such as countries or visits.
   Its dtypes are inferred from the values, and nested objects and lists are left out.

@@ -38,6 +38,9 @@ client = CastorEDC.new(client_id: "...", client_secret: "...")
 # Or from an export already downloaded: the struct, or the path to its zip or directory.
 {:ok, frames} = CastorEDC.Explorer.participant_data(client, study_id, from: "exports/study.zip")
 
+# A frame per domain, from the export grouped by the study's domains.
+{:ok, %{"DM" => demographics}} = CastorEDC.Explorer.domains(client, study_id, labels: true)
+
 # The study's participants, fields, sites and options.
 {:ok, participants} = CastorEDC.Explorer.participants(client, study_id)
 {:ok, fields} = CastorEDC.Explorer.fields(client, study_id)

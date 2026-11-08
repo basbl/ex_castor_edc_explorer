@@ -14,6 +14,7 @@ defmodule CastorEDC.Explorer do
   a request fails.
   """
 
+  alias CastorEDC.Explorer.Domains
   alias CastorEDC.Explorer.Frame
   alias CastorEDC.Explorer.ParticipantData
   alias CastorEDC.Tabular
@@ -453,11 +454,81 @@ defmodule CastorEDC.Explorer do
     {missing_columns, opts} = Keyword.pop(opts, :missing_columns, false)
     {from, opts} = Keyword.pop(opts, :from)
 
-    with {:ok, files} <- export_files(client, study_id, from, opts) do
+    with {:ok, files} <- export_files(client, study_id, from, opts, []) do
+      if Domains.grouped?(files),
+        do: raise(ArgumentError, "the export is grouped by domain; read it with CastorEDC.Explorer.domains/3")
+
       repeating_data = Enum.map(CastorEDC.RepeatingData.stream_repeating_data(client, study_id), & &1.name)
       surveys = Enum.map(CastorEDC.Surveys.stream_surveys(client, study_id), & &1.name)
 
       {:ok, ParticipantData.read(files, repeating_data, surveys, missing_columns)}
+    end
+  rescue
+    error in CastorEDC.Error -> {:error, error}
+  end
+
+  @doc """
+  The study's data from a participant data export grouped by domain, as a
+  frame per domain, keyed by the domain's abbreviation, such as `"DM"`.
+
+  A study's domains map its fields, from any visit, repeating data or
+  survey, to the variables of a domain, as in CDISC SDTM. The grouped
+  export, which this runs in CSV, has a file per domain with a row per
+  participant per visit, repeating data instance or survey that holds the
+  domain's values, typed by the domain's own variable list:
+
+  | Field type | Dtype |
+  | --- | --- |
+  | `numeric`, `slider` | `{:f, 64}` |
+  | `year` | `{:s, 64}` |
+  | `date` | `:date` |
+  | `time` | `:time` |
+  | `datetime` | `{:naive_datetime, :microsecond}` |
+  | `numberdate` | `<variable>_number` of `{:f, 64}` and `<variable>_date` of `:date` |
+  | `checkbox` | a `:boolean` column per option, `<variable>_<option value>` |
+  | others | `:string` |
+
+  The metadata columns come first, as the export names them, except for
+  `created_on` (the participant's creation): `participant_id`,
+  `participant_status`, `site_abbreviation`, `randomization_id`,
+  `randomization_group`, `randomized_on`, `created_on`, `parent_type`,
+  `parent_name`, `visit_name`, `visit_number` (`{:s, 64}`), `type`
+  (`"Visit"`, `"Repeating data"` or `"Survey"`) and `name` (the visit or
+  instance). Times are `{:naive_datetime, :microsecond}`, in the server's
+  time zone, and the rest `:string`.
+
+  Values marked missing are nulls; with `missing_columns: true`, their
+  codes go in a `<variable>_missing` column of `{:s, 16}` (one per
+  checkbox). With `labels: true`, the export also writes the options'
+  names, and each radio and dropdown gets a `<variable>_label` column of
+  `:string` holding them.
+
+  ## Options
+
+    * `:filters` - as for `CastorEDC.Export.participant_data/3`, such as
+      `site_ids: [...]`
+    * `:missing_columns` - add the missing-value columns; `false` by
+      default
+    * `:labels` - add the option-name columns; `false` by default
+    * `:timeout` and `:poll_interval` - as for `participant_data/3`
+    * `:from` - read a grouped export already made instead of running one,
+      as for `participant_data/3`
+
+  Raises `ArgumentError` when the export given as `:from` isn't grouped.
+  """
+  @spec domains(CastorEDC.client(), String.t(), keyword()) ::
+          {:ok, %{String.t() => DataFrame.t()}} | {:error, CastorEDC.Error.t()}
+  def domains(client, study_id, opts \\ []) do
+    {missing_columns, opts} = Keyword.pop(opts, :missing_columns, false)
+    {labels, opts} = Keyword.pop(opts, :labels, false)
+    {from, opts} = Keyword.pop(opts, :from)
+    options = [grouped: true, export_coded_options_as: if(labels, do: "values_and_names", else: "values")]
+
+    with {:ok, files} <- export_files(client, study_id, from, opts, options) do
+      if not Domains.grouped?(files),
+        do: raise(ArgumentError, "the export isn't grouped by domain; read it with CastorEDC.Explorer.participant_data/3")
+
+      {:ok, Domains.read(files, missing_columns, labels)}
     end
   rescue
     error in CastorEDC.Error -> {:error, error}
@@ -542,17 +613,17 @@ defmodule CastorEDC.Explorer do
 
   @export_options [:filters, :timeout, :poll_interval]
 
-  # The export's files as {name, contents}, from a new export or the one
-  # given as :from.
-  defp export_files(client, study_id, nil, opts) do
-    export_opts = [format: :csv, unzip: true] ++ Keyword.take(opts, @export_options)
+  # The export's files as {name, contents}, from a new export with the
+  # export options given, or the one given as :from.
+  defp export_files(client, study_id, nil, opts, options) do
+    export_opts = [format: :csv, unzip: true, options: options] ++ Keyword.take(opts, @export_options)
 
     with {:ok, export} <- CastorEDC.Export.participant_data(client, study_id, export_opts) do
       {:ok, ParticipantData.contents(export.files)}
     end
   end
 
-  defp export_files(_client, _study_id, from, opts) do
+  defp export_files(_client, _study_id, from, opts, _options) do
     case Keyword.take(opts, @export_options) do
       [] -> {:ok, ParticipantData.files(from)}
       given -> raise ArgumentError, ":from reads an export already made, so it takes no #{inspect(Keyword.keys(given))}"
