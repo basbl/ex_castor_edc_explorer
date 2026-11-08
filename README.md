@@ -37,6 +37,11 @@ client = CastorEDC.new(client_id: "...", client_secret: "...")
 {:ok, fields} = CastorEDC.Explorer.fields(client, study_id)
 {:ok, sites} = CastorEDC.Explorer.sites(client, study_id)
 {:ok, options} = CastorEDC.Explorer.option_groups(client, study_id)
+
+# The survey packages sent, the repeating data instances made, and the queries raised.
+{:ok, packages} = CastorEDC.Explorer.survey_package_instances(client, study_id)
+{:ok, instances} = CastorEDC.Explorer.repeating_data_instances(client, study_id)
+{:ok, queries} = CastorEDC.Explorer.queries(client, study_id)
 ```
 
 ## Contributing

@@ -252,4 +252,89 @@ defmodule CastorEDC.ExplorerTest do
              ]
     end
   end
+
+  describe "survey_package_instances/2" do
+    test "gives a row per survey package instance" do
+      assert {:ok, frame} = CastorEDC.Explorer.survey_package_instances(Study.client(), Study.id())
+
+      assert DataFrame.dtypes(frame)["progress"] == {:s, 64}
+      assert DataFrame.dtypes(frame)["finished_on"] == {:datetime, :microsecond, "Etc/UTC"}
+
+      assert [spi1, spi2] = DataFrame.to_rows(frame)
+
+      assert %{
+               "survey_package_instance_id" => "spi-1",
+               "survey_package_name" => "Anxiety",
+               "participant_id" => "P2",
+               "site_name" => "Utrecht",
+               "status" => "Finished",
+               "progress" => 100,
+               "locked" => false,
+               "parent_id" => "visit-1",
+               "parent_type" => "visit",
+               "created_on" => ~U[2026-10-07 19:50:13.000000Z],
+               "sent_on" => ~U[2026-10-08 07:00:00.000000Z],
+               "finished_on" => nil
+             } = spi1
+
+      assert %{"survey_package_instance_id" => "spi-2", "parent_id" => nil, "parent_type" => nil} = spi2
+    end
+
+    test "returns the error of a failed request" do
+      client = Study.client(%{"/survey-package-instance" => CastorEDC.Test.json(%{"detail" => "Forbidden"}, status: 403)})
+      assert {:error, %CastorEDC.Error{status: 403}} = CastorEDC.Explorer.survey_package_instances(client, Study.id())
+    end
+  end
+
+  describe "repeating_data_instances/2" do
+    test "gives a row per repeating data instance" do
+      assert {:ok, frame} = CastorEDC.Explorer.repeating_data_instances(Study.client(), Study.id())
+
+      assert DataFrame.dtypes(frame)["created_on"] == {:naive_datetime, :microsecond}
+
+      assert [
+               %{
+                 "repeating_data_instance_id" => "rdi-1",
+                 "name" => "Blood pressure - 07-10-2026 21:46:26",
+                 "repeating_data_id" => "rd-1",
+                 "repeating_data_name" => "Blood pressure",
+                 "participant_id" => "P1",
+                 "archived" => false,
+                 "parent_id" => nil,
+                 "parent_type" => nil,
+                 "created_on" => ~N[2026-10-07 21:46:26.000000]
+               },
+               %{"repeating_data_instance_id" => "rdi-2", "repeating_data_id" => nil, "archived" => true}
+             ] = DataFrame.to_rows(frame)
+    end
+  end
+
+  describe "queries/2" do
+    test "gives a row per query" do
+      assert {:ok, frame} = CastorEDC.Explorer.queries(Study.client(), Study.id())
+
+      assert DataFrame.to_rows(frame) == [
+               %{
+                 "query_id" => "q-1",
+                 "participant_id" => "P1",
+                 "field_id" => "f-weight",
+                 "status" => "New",
+                 "first_query_remark" => "Is this right?",
+                 "remarks" => 2,
+                 "created_by" => nil,
+                 "created_on" => ~U[2026-10-08 08:00:00.000000Z],
+                 "updated_by" => nil,
+                 "updated_on" => nil
+               }
+             ]
+    end
+
+    test "keeps the columns when there are no queries" do
+      client = Study.client(%{"/query" => Study.page("queries", [])})
+
+      assert {:ok, frame} = CastorEDC.Explorer.queries(client, Study.id())
+      assert DataFrame.n_rows(frame) == 0
+      assert DataFrame.dtypes(frame)["created_on"] == {:datetime, :microsecond, "Etc/UTC"}
+    end
+  end
 end

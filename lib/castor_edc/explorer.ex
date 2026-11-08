@@ -164,6 +164,58 @@ defmodule CastorEDC.Explorer do
     {"order", :order, {:s, 64}}
   ]
 
+  @survey_package_instances [
+    {"survey_package_instance_id", :id, :string},
+    {"survey_package_id", :survey_package_id, :string},
+    {"survey_package_name", :survey_package_name, :string},
+    {"participant_id", :participant_id, :string},
+    {"site_id", :site_id, :string},
+    {"site_name", :site_name, :string},
+    {"status", :status, :string},
+    {"progress", :progress, {:s, 64}},
+    {"locked", :locked, :boolean},
+    {"archived", :archived, :boolean},
+    {"parent_id", :parent_id, :string},
+    {"parent_type", :parent_type, :string},
+    {"created_by", :created_by, :string},
+    {"created_on", :created_on, @datetime},
+    {"available_from", :available_from, @datetime},
+    {"sent_on", :sent_on, @datetime},
+    {"received_on", :received_on, @datetime},
+    {"first_opened_on", :first_opened_on, @datetime},
+    {"started_on", :started_on, @datetime},
+    {"all_fields_filled_on", :all_fields_filled_on, @datetime},
+    {"finished_on", :finished_on, @datetime},
+    {"expire_on", :expire_on, @datetime}
+  ]
+
+  @repeating_data_instances [
+    {"repeating_data_instance_id", :id, :string},
+    {"name", :name, :string},
+    {"repeating_data_id", :repeating_data_id, :string},
+    {"repeating_data_name", :repeating_data_name, :string},
+    {"participant_id", :participant_id, :string},
+    {"status", :status, :string},
+    {"archived", :archived, :boolean},
+    {"parent_id", :parent_id, :string},
+    {"parent_type", :parent_type, :string},
+    {"created_by", :created_by, :string},
+    {"created_on", :created_on, {:naive_datetime, :microsecond}}
+  ]
+
+  @queries [
+    {"query_id", :id, :string},
+    {"participant_id", :participant_id, :string},
+    {"field_id", :field_id, :string},
+    {"status", :status, :string},
+    {"first_query_remark", :first_query_remark, :string},
+    {"remarks", :remarks, {:s, 64}},
+    {"created_by", :created_by, :string},
+    {"created_on", :created_on, @datetime},
+    {"updated_by", :updated_by, :string},
+    {"updated_on", :updated_on, @datetime}
+  ]
+
   @doc """
   The study's participants, a row each.
 
@@ -255,6 +307,78 @@ defmodule CastorEDC.Explorer do
   end
 
   @doc """
+  The study's survey package instances, the survey packages sent to (or
+  started for) participants, a row each.
+
+  Columns: `survey_package_instance_id`, `survey_package_id` and
+  `survey_package_name`, `participant_id`, `site_id` and `site_name`,
+  `status`, `progress` (`{:s, 64}`, a percentage), `locked` and
+  `archived` (`:boolean`), `parent_id` and `parent_type` (`"visit"` or
+  `"repeating_data_instance"`, for one that belongs to either), `created_by`, and the
+  times `created_on`, `available_from`, `sent_on`, `received_on`,
+  `first_opened_on`, `started_on`, `all_fields_filled_on`, `finished_on`
+  and `expire_on`, which are `{:datetime, :microsecond, "Etc/UTC"}`. The
+  rest are `:string`.
+  """
+  @spec survey_package_instances(CastorEDC.client(), String.t()) ::
+          {:ok, DataFrame.t()} | {:error, CastorEDC.Error.t()}
+  def survey_package_instances(client, study_id) do
+    resource(@survey_package_instances, fn ->
+      for instance <- CastorEDC.Surveys.stream_survey_package_instances(client, study_id) do
+        %{instance | parent_id: blank_to_nil(instance.parent_id), parent_type: parent_type(instance.parent_type)}
+      end
+    end)
+  end
+
+  @doc """
+  The study's repeating data instances, such as each adverse event a
+  participant had, a row each.
+
+  Columns: `repeating_data_instance_id`, `name` (the instance's own),
+  `repeating_data_id` and `repeating_data_name`, `participant_id`,
+  `status`, `archived` (`:boolean`), `parent_id` and `parent_type` (what
+  it was created from, if anything), `created_by`, and `created_on`,
+  which is `{:naive_datetime, :microsecond}` in the server's time zone,
+  as the API gives it. The rest are `:string`.
+
+  The instances' values are in `data_points/3`, under their
+  `repeating_data_instance_id` as `instance_id`.
+  """
+  @spec repeating_data_instances(CastorEDC.client(), String.t()) ::
+          {:ok, DataFrame.t()} | {:error, CastorEDC.Error.t()}
+  def repeating_data_instances(client, study_id) do
+    resource(@repeating_data_instances, fn ->
+      for instance <- CastorEDC.RepeatingData.stream_repeating_data_instances(client, study_id) do
+        Map.merge(instance, %{
+          repeating_data_id: instance.repeating_data && instance.repeating_data.id,
+          parent_id: blank_to_nil(instance.parent_id),
+          parent_type: blank_to_nil(instance.parent_type)
+        })
+      end
+    end)
+  end
+
+  @doc """
+  The queries raised on the study's values, a row each.
+
+  Columns: `query_id`, `participant_id`, `field_id`, `status`,
+  `first_query_remark`, `remarks` (`{:s, 64}`, how many remarks the
+  query has), `created_by`, `created_on`, `updated_by` and `updated_on`.
+  The times are `{:datetime, :microsecond, "Etc/UTC"}`, the rest
+  `:string`.
+
+  Join `field_id` with `fields/2` for the field's name and form.
+  """
+  @spec queries(CastorEDC.client(), String.t()) :: {:ok, DataFrame.t()} | {:error, CastorEDC.Error.t()}
+  def queries(client, study_id) do
+    resource(@queries, fn ->
+      for query <- CastorEDC.Queries.stream_queries(client, study_id) do
+        Map.put(query, :remarks, query.query_remarks && length(query.query_remarks))
+      end
+    end)
+  end
+
+  @doc """
   The study's data from a participant data export, as a `t:wide/0` map of
   frames: one for the study's values, and one per repeating data and per
   survey.
@@ -315,6 +439,16 @@ defmodule CastorEDC.Explorer do
 
   defp value_type({list, of}), do: "#{list}(#{of})"
   defp value_type(type), do: Atom.to_string(type)
+
+  defp blank_to_nil(""), do: nil
+  defp blank_to_nil(value), do: value
+
+  # A survey package instance's parent type is a code: 0 for none, 1 for a
+  # visit, 2 for a repeating data instance.
+  defp parent_type("0"), do: nil
+  defp parent_type("1"), do: "visit"
+  defp parent_type("2"), do: "repeating_data_instance"
+  defp parent_type(type), do: blank_to_nil(type)
 
   defp flag(nil), do: nil
   defp flag(value), do: value not in [0, false]
