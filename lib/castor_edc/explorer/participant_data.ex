@@ -187,7 +187,7 @@ defmodule CastorEDC.Explorer.ParticipantData do
         kind = kind(variables[variable])
         column = {variable, dtype(kind), Enum.map(values, &parse(missing_free(&1, kind), kind, variable))}
 
-        if missing_columns and kind != :string,
+        if missing_columns,
           do: [column, {variable <> "_missing", {:s, 16}, Enum.map(values, &missing(&1, kind))}],
           else: [column]
     end
@@ -221,15 +221,12 @@ defmodule CastorEDC.Explorer.ParticipantData do
   defp dtype(kind) when kind in [:datetime, :timestamp], do: {:naive_datetime, :microsecond}
   defp dtype(:string), do: :string
 
-  # Values marked missing are written as -95 to -99 in numbers and as the
-  # dates 1 January 2995 to 2999.
+  # Values marked missing are written as the dates 1 January 2995 to 2999
+  # in date fields, and as -95 to -99 in every other field, datetimes and
+  # option and text fields included.
   defp missing(nil, _kind), do: nil
-  defp missing(value, kind) when kind in [:number, :integer], do: @missing_numbers[value]
-
-  defp missing(value, kind) when kind in [:date, :datetime],
-    do: @missing_dates[value |> String.split(" ", parts: 2) |> hd()]
-
-  defp missing(_value, _kind), do: nil
+  defp missing(value, :date), do: @missing_dates[value]
+  defp missing(value, _kind), do: @missing_numbers[value]
 
   defp missing_free(value, kind), do: if(missing(value, kind), do: nil, else: value)
 

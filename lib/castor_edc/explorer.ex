@@ -415,12 +415,12 @@ defmodule CastorEDC.Explorer do
   `survey_package_id` for surveys. Their times are
   `{:naive_datetime, :microsecond}`, in the server's time zone.
 
-  The export writes values marked missing as -95 to -99 in numeric and
-  year fields and as the dates 1 January 2995 to 2999 in date fields;
-  they become nulls, and with `missing_columns: true` their codes go in a
-  `<variable>_missing` column of `{:s, 16}`. In other fields, and in
-  checkboxes, the export leaves them empty, so the frames can't tell them
-  from values never entered.
+  The export writes values marked missing as the dates 1 January 2995 to
+  2999 in date fields, and as -95 to -99 in every other field but
+  checkboxes; they become nulls, and with `missing_columns: true` their
+  codes go in a `<variable>_missing` column of `{:s, 16}`. A checkbox's
+  missing values are left empty, so its columns can't tell them from
+  values never entered.
 
   ## Options
 

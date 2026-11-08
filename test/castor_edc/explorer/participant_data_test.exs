@@ -11,7 +11,7 @@ defmodule CastorEDC.Explorer.ParticipantDataTest do
   @study_csv @bom <>
                ~s("Participant Id";"Participant Status";"Site Abbreviation";"Participant Creation Date";weight;year;visit;seen;time;sex;"family#Renal disease";family#Deafness;note\n) <>
                ~s(P1;"Not Set";AMS;"07-10-2026 21:06:33";72.5;1980;07-10-2026;"07-10-2026 12:30";12:30;1;1;0;"fine; thanks"\n) <>
-               ~s(P2;"Not Set";UTR;"08-10-2026 10:00:33";-98;-95;01-01-2997;;;;0;0;\n)
+               ~s(P2;"Not Set";UTR;"08-10-2026 10:00:33";-98;-95;01-01-2997;-96;;-99;0;0;-98\n)
 
   @repeating_csv @bom <>
                    ~s("Participant Id";"Participant Status";"Repeating Data Creation Date";"Repeating data Name Custom";"Repeating data Parent";sys\n) <>
@@ -128,8 +128,12 @@ defmodule CastorEDC.Explorer.ParticipantDataTest do
       assert columns["weight_missing"] == [nil, 98]
       assert columns["year_missing"] == [nil, 95]
       assert columns["visit_missing"] == [nil, 97]
+      assert columns["seen_missing"] == [nil, 96]
+      assert columns["time_missing"] == [nil, nil]
+      assert columns["sex_missing"] == [nil, 99]
+      assert columns["note_missing"] == [nil, 98]
       assert DataFrame.dtypes(study)["visit_missing"] == {:s, 16}
-      refute "sex_missing" in DataFrame.names(study)
+      refute "family_0_missing" in DataFrame.names(study)
     end
 
     test "queues a CSV export with the filters given" do
