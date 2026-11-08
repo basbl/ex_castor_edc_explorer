@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `CastorEDC.Explorer.survey_package_instances/2`, `repeating_data_instances/2` and `queries/2` give those resources as frames, a row each, with fixed dtypes.
   A survey package instance's `parent_type` is named (`"visit"` or `"repeating_data_instance"`) instead of the API's code, and a query's `remarks` counts its remarks.
+- `labels: true` on `CastorEDC.Explorer.data_points/3` gives the names of the chosen options, which the user saw, next to their values: a `label` column in the long frame, and the names instead of the values in the wide frames' radio and dropdown columns.
 
 ### Changed
 

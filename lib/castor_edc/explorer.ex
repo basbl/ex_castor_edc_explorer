@@ -46,6 +46,8 @@ defmodule CastorEDC.Explorer do
     {"updated_on", :updated_on, {:naive_datetime, :microsecond}}
   ]
 
+  @label {"label", :label, :string}
+
   @doc """
   The values the study collected, from `CastorEDC.Tabular.data_points/3`.
 
@@ -83,9 +85,22 @@ defmodule CastorEDC.Explorer do
   `missing_columns: true`, each variable also gets a `<variable>_missing`
   column of `{:s, 16}` holding the code.
 
+  ## Option labels
+
+  An option field (a radio, dropdown or checkbox) stores the value of the
+  chosen option, such as `"1"`, where the user saw its name, such as
+  `"Female"`. With `labels: true`, the long frame gets a `label` column
+  of `:string` after `value`, holding the option's name (the names of the
+  checked options, `;` between them, for a checkbox), and in the wide
+  frames a radio or dropdown column holds the option's name instead of
+  its value. A checkbox's wide columns stay `:boolean`, named after the
+  options' values. A value that isn't one of its field's options keeps
+  the value itself, and fields without options have no label.
+
   ## Options
 
     * `:format` - `:long` (the default) or `:wide`
+    * `:labels` - the options' names, as above; `false` by default
     * `:missing_columns` - add the missing-value columns to wide frames;
       `false` by default
     * `:sources` and `:schema` - as for `CastorEDC.Tabular.data_points/3`
@@ -94,10 +109,11 @@ defmodule CastorEDC.Explorer do
           {:ok, DataFrame.t() | wide()} | {:error, CastorEDC.Error.t()}
   def data_points(client, study_id, opts \\ []) do
     {missing_columns, opts} = Keyword.pop(opts, :missing_columns, false)
+    {labels, opts} = Keyword.pop(opts, :labels, false)
 
     case Keyword.get(opts, :format, :long) do
-      :long -> {:ok, long(client, study_id, opts)}
-      :wide -> {:ok, wide(client, study_id, opts, missing_columns)}
+      :long -> {:ok, long(client, study_id, opts, labels)}
+      :wide -> {:ok, wide(client, study_id, opts, missing_columns, labels)}
       other -> raise ArgumentError, "expected :format to be :long or :wide, got: #{inspect(other)}"
     end
   rescue
@@ -453,7 +469,7 @@ defmodule CastorEDC.Explorer do
   defp flag(nil), do: nil
   defp flag(value), do: value not in [0, false]
 
-  defp long(client, study_id, opts) do
+  defp long(client, study_id, opts, false) do
     client
     |> Tabular.data_points(study_id, opts)
     |> Enum.map(&%{&1 | source: Atom.to_string(&1.source)})
@@ -461,7 +477,30 @@ defmodule CastorEDC.Explorer do
     |> Frame.from_rows(@long)
   end
 
-  defp wide(client, study_id, opts, missing_columns) do
+  defp long(client, study_id, opts, true) do
+    schema = Keyword.get_lazy(opts, :schema, fn -> schema!(client, study_id) end)
+    names = schema |> Map.values() |> Map.new(&{&1.field_id, option_names(&1)})
+    {before, rest} = Enum.split_while(@long, &(elem(&1, 0) != "missing"))
+
+    client
+    |> Tabular.data_points(study_id, Keyword.put(opts, :schema, schema))
+    |> Enum.map(&%{&1 | source: Atom.to_string(&1.source)})
+    |> Enum.map(&Map.merge(&1, %{missing: Frame.missing(&1.value), label: label(&1.value, names[&1.field_id])}))
+    |> Frame.from_rows(before ++ [@label | rest])
+  end
+
+  # An option field's names by their values; nil for other fields.
+  defp option_names(%{option_group: %{options: [_option | _more] = options}}), do: Map.new(options, &{&1.value, &1.name})
+  defp option_names(_column), do: nil
+
+  # The name of an option value, or the names of a checkbox's, `;` between
+  # them; a value that isn't an option keeps itself.
+  defp label(_value, nil), do: nil
+  defp label(value, names) when is_binary(value), do: Map.get(names, value, value)
+  defp label(values, names) when is_list(values), do: Enum.map_join(values, ";", &label(&1, names))
+  defp label(_value, _names), do: nil
+
+  defp wide(client, study_id, opts, missing_columns, labels) do
     schema = Keyword.get_lazy(opts, :schema, fn -> schema!(client, study_id) end)
     sources = Keyword.get(opts, :sources, @sources)
 
@@ -472,11 +511,12 @@ defmodule CastorEDC.Explorer do
 
     frames =
       for {{context, parent_id} = key, columns} <- groups(schema, sources) do
-        {context, parent_id, parent_name(columns), frame(context, columns, Map.get(rows, key, []), missing_columns)}
+        frame = frame(context, columns, Map.get(rows, key, []), missing_columns, labels)
+        {context, parent_id, parent_name(columns), frame}
       end
 
     %{
-      study: Enum.find_value(frames, &study_frame/1) || frame(:study, [], [], missing_columns),
+      study: Enum.find_value(frames, &study_frame/1) || frame(:study, [], [], missing_columns, labels),
       repeating_data: named(frames, :repeating_data),
       surveys: named(frames, :survey)
     }
@@ -509,7 +549,7 @@ defmodule CastorEDC.Explorer do
     Map.new(entries, fn {id, name, frame} -> {if(Map.has_key?(shared, name), do: id, else: name), frame} end)
   end
 
-  defp frame(context, columns, rows, missing_columns) do
+  defp frame(context, columns, rows, missing_columns, labels) do
     fixed =
       [{"participant_id", :participant_id}, {"site_id", :site_id}] ++
         if context == :study, do: [], else: [{"instance_id", :instance_id}]
@@ -517,7 +557,7 @@ defmodule CastorEDC.Explorer do
     variables =
       columns
       |> Enum.sort_by(&{&1.position, variable_name(&1)})
-      |> Enum.flat_map(&variable_columns(&1, missing_columns))
+      |> Enum.flat_map(&variable_columns(&1, missing_columns, labels))
 
     rows = Enum.sort_by(rows, &{&1.participant_id, &1.instance_id})
 
@@ -529,10 +569,11 @@ defmodule CastorEDC.Explorer do
 
   # The frame columns of a field: {name, dtype, a function reading the
   # column's value from a wide row}.
-  defp variable_columns(column, missing_columns) do
+  defp variable_columns(column, missing_columns, labels) do
     names = for {name, _value} <- Tabular.wide_cells([column], %{}), do: name
     dtype = dtype(column)
-    values = for name <- names, do: {name, dtype, &Frame.cast(Map.get(&1, name), dtype)}
+    option_names = if labels and dtype == :string, do: option_names(column)
+    values = for name <- names, do: {name, dtype, &Frame.cast(label_or_value(Map.get(&1, name), option_names), dtype)}
 
     if missing_columns do
       first = hd(names)
@@ -541,6 +582,10 @@ defmodule CastorEDC.Explorer do
       values
     end
   end
+
+  defp label_or_value(value, nil), do: value
+  defp label_or_value(value, names) when is_binary(value) or is_list(value), do: label(value, names)
+  defp label_or_value(value, _names), do: value
 
   defp variable_name(%{variable_name: name}) when is_binary(name) and name != "", do: name
   defp variable_name(%{field_id: id}), do: id

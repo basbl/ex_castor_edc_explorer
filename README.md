@@ -24,6 +24,9 @@ client = CastorEDC.new(client_id: "...", client_secret: "...")
 # A row per value: the study's, repeating data's and surveys' values alike.
 {:ok, values} = CastorEDC.Explorer.data_points(client, study_id)
 
+# With the names of the chosen options, as the user saw them, next to their values.
+{:ok, values} = CastorEDC.Explorer.data_points(client, study_id, labels: true)
+
 # A frame per study, repeating data and survey, with a column per variable.
 {:ok, %{study: study, repeating_data: repeating_data, surveys: surveys}} =
   CastorEDC.Explorer.data_points(client, study_id, format: :wide)

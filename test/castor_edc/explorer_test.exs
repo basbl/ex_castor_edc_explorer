@@ -103,6 +103,45 @@ defmodule CastorEDC.ExplorerTest do
       refute "family_0_missing" in DataFrame.names(study)
     end
 
+    test "adds the options' names after the values when asked" do
+      assert {:ok, frame} = CastorEDC.Explorer.data_points(Study.client(), Study.id(), labels: true)
+
+      names = DataFrame.names(frame)
+      assert Enum.slice(names, Enum.find_index(names, &(&1 == "value")), 3) == ~w(value label missing)
+      assert DataFrame.dtypes(frame)["label"] == :string
+
+      rows = DataFrame.to_rows(frame)
+      assert %{"value" => "1", "label" => "Female"} = value(rows, "P1", "sex")
+      assert %{"value" => "0;2", "label" => "Renal;Diabetes"} = value(rows, "P1", "family")
+      assert %{"value" => "72.5", "label" => nil} = value(rows, "P1", "weight")
+      assert %{"value" => nil, "missing" => 95, "label" => nil} = value(rows, "P2", "family")
+      assert %{"value" => "3", "label" => "Nearly every day"} = value(rows, "P2", "gad")
+    end
+
+    test "keeps a value that isn't one of its field's options as its label" do
+      client =
+        Study.client(%{
+          "/data-points/survey-instance" =>
+            Study.page("items", [
+              %{"participant_id" => "P2", "field_id" => "f-gad", "field_value" => "7", "survey_instance_id" => "si-1"}
+            ])
+        })
+
+      assert {:ok, frame} = CastorEDC.Explorer.data_points(client, Study.id(), labels: true, sources: [:survey])
+      assert [%{"value" => "7", "label" => "7"}] = DataFrame.to_rows(frame)
+    end
+
+    test "puts the options' names in the wide frames' option columns when asked" do
+      assert {:ok, %{study: study, surveys: %{"GAD-7" => gad}}} =
+               CastorEDC.Explorer.data_points(Study.client(), Study.id(), format: :wide, labels: true)
+
+      assert %{"sex" => "Female", "family_0" => true, "family_1" => false, "weight" => 72.5} =
+               study |> DataFrame.to_rows() |> hd()
+
+      assert DataFrame.dtypes(study)["family_0"] == :boolean
+      assert DataFrame.to_columns(gad)["gad"] == ["Nearly every day"]
+    end
+
     test "keeps the columns of a study without values" do
       client = Study.client(%{"/data-points/study" => Study.page("items", [])})
 
