@@ -482,6 +482,7 @@ defmodule CastorEDC.Explorer do
   | `numeric`, `slider` | `{:f, 64}` |
   | `year` | `{:s, 64}` |
   | `date` | `:date` |
+  | `date_partial` | `:string`, as `2026-05-01`, which may lack a day or month |
   | `time` | `:time` |
   | `datetime` | `{:naive_datetime, :microsecond}` |
   | `numberdate` | `<variable>_number` of `{:f, 64}` and `<variable>_date` of `:date` |
@@ -497,9 +498,10 @@ defmodule CastorEDC.Explorer do
   instance). Times are `{:naive_datetime, :microsecond}`, in the server's
   time zone, and the rest `:string`.
 
-  Values marked missing are nulls; with `missing_columns: true`, their
-  codes go in a `<variable>_missing` column of `{:s, 16}` (one per
-  checkbox). With `labels: true`, the export also writes the options'
+  Values marked missing are nulls, whether the export wrote their codes in
+  `_U` columns of their own or in the variables' columns; with
+  `missing_columns: true`, their codes go in a `<variable>_missing` column
+  of `{:s, 16}` (one per checkbox). With `labels: true`, the export also writes the options'
   names, and each radio and dropdown gets a `<variable>_label` column of
   `:string` holding them.
 
