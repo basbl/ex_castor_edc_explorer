@@ -14,6 +14,7 @@ defmodule CastorEDC.Explorer do
   a request fails.
   """
 
+  alias CastorEDC.Explorer.Domains
   alias CastorEDC.Explorer.Frame
   alias CastorEDC.Explorer.ParticipantData
   alias CastorEDC.Tabular
@@ -45,6 +46,8 @@ defmodule CastorEDC.Explorer do
     {"raw_value", :raw_value, :string},
     {"updated_on", :updated_on, {:naive_datetime, :microsecond}}
   ]
+
+  @label {"label", :label, :string}
 
   @doc """
   The values the study collected, from `CastorEDC.Tabular.data_points/3`.
@@ -83,9 +86,22 @@ defmodule CastorEDC.Explorer do
   `missing_columns: true`, each variable also gets a `<variable>_missing`
   column of `{:s, 16}` holding the code.
 
+  ## Option labels
+
+  An option field (a radio, dropdown or checkbox) stores the value of the
+  chosen option, such as `"1"`, where the user saw its name, such as
+  `"Female"`. With `labels: true`, the long frame gets a `label` column
+  of `:string` after `value`, holding the option's name (the names of the
+  checked options, `;` between them, for a checkbox), and in the wide
+  frames a radio or dropdown column holds the option's name instead of
+  its value. A checkbox's wide columns stay `:boolean`, named after the
+  options' values. A value that isn't one of its field's options keeps
+  the value itself, and fields without options have no label.
+
   ## Options
 
     * `:format` - `:long` (the default) or `:wide`
+    * `:labels` - the options' names, as above; `false` by default
     * `:missing_columns` - add the missing-value columns to wide frames;
       `false` by default
     * `:sources` and `:schema` - as for `CastorEDC.Tabular.data_points/3`
@@ -94,10 +110,11 @@ defmodule CastorEDC.Explorer do
           {:ok, DataFrame.t() | wide()} | {:error, CastorEDC.Error.t()}
   def data_points(client, study_id, opts \\ []) do
     {missing_columns, opts} = Keyword.pop(opts, :missing_columns, false)
+    {labels, opts} = Keyword.pop(opts, :labels, false)
 
     case Keyword.get(opts, :format, :long) do
-      :long -> {:ok, long(client, study_id, opts)}
-      :wide -> {:ok, wide(client, study_id, opts, missing_columns)}
+      :long -> {:ok, long(client, study_id, opts, labels)}
+      :wide -> {:ok, wide(client, study_id, opts, missing_columns, labels)}
       other -> raise ArgumentError, "expected :format to be :long or :wide, got: #{inspect(other)}"
     end
   rescue
@@ -162,6 +179,58 @@ defmodule CastorEDC.Explorer do
     {"value", :value, :string},
     {"name", :name, :string},
     {"order", :order, {:s, 64}}
+  ]
+
+  @survey_package_instances [
+    {"survey_package_instance_id", :id, :string},
+    {"survey_package_id", :survey_package_id, :string},
+    {"survey_package_name", :survey_package_name, :string},
+    {"participant_id", :participant_id, :string},
+    {"site_id", :site_id, :string},
+    {"site_name", :site_name, :string},
+    {"status", :status, :string},
+    {"progress", :progress, {:s, 64}},
+    {"locked", :locked, :boolean},
+    {"archived", :archived, :boolean},
+    {"parent_id", :parent_id, :string},
+    {"parent_type", :parent_type, :string},
+    {"created_by", :created_by, :string},
+    {"created_on", :created_on, @datetime},
+    {"available_from", :available_from, @datetime},
+    {"sent_on", :sent_on, @datetime},
+    {"received_on", :received_on, @datetime},
+    {"first_opened_on", :first_opened_on, @datetime},
+    {"started_on", :started_on, @datetime},
+    {"all_fields_filled_on", :all_fields_filled_on, @datetime},
+    {"finished_on", :finished_on, @datetime},
+    {"expire_on", :expire_on, @datetime}
+  ]
+
+  @repeating_data_instances [
+    {"repeating_data_instance_id", :id, :string},
+    {"name", :name, :string},
+    {"repeating_data_id", :repeating_data_id, :string},
+    {"repeating_data_name", :repeating_data_name, :string},
+    {"participant_id", :participant_id, :string},
+    {"status", :status, :string},
+    {"archived", :archived, :boolean},
+    {"parent_id", :parent_id, :string},
+    {"parent_type", :parent_type, :string},
+    {"created_by", :created_by, :string},
+    {"created_on", :created_on, {:naive_datetime, :microsecond}}
+  ]
+
+  @queries [
+    {"query_id", :id, :string},
+    {"participant_id", :participant_id, :string},
+    {"field_id", :field_id, :string},
+    {"status", :status, :string},
+    {"first_query_remark", :first_query_remark, :string},
+    {"remarks", :remarks, {:s, 64}},
+    {"created_by", :created_by, :string},
+    {"created_on", :created_on, @datetime},
+    {"updated_by", :updated_by, :string},
+    {"updated_on", :updated_on, @datetime}
   ]
 
   @doc """
@@ -255,6 +324,78 @@ defmodule CastorEDC.Explorer do
   end
 
   @doc """
+  The study's survey package instances, the survey packages sent to (or
+  started for) participants, a row each.
+
+  Columns: `survey_package_instance_id`, `survey_package_id` and
+  `survey_package_name`, `participant_id`, `site_id` and `site_name`,
+  `status`, `progress` (`{:s, 64}`, a percentage), `locked` and
+  `archived` (`:boolean`), `parent_id` and `parent_type` (`"visit"` or
+  `"repeating_data_instance"`, for one that belongs to either), `created_by`, and the
+  times `created_on`, `available_from`, `sent_on`, `received_on`,
+  `first_opened_on`, `started_on`, `all_fields_filled_on`, `finished_on`
+  and `expire_on`, which are `{:datetime, :microsecond, "Etc/UTC"}`. The
+  rest are `:string`.
+  """
+  @spec survey_package_instances(CastorEDC.client(), String.t()) ::
+          {:ok, DataFrame.t()} | {:error, CastorEDC.Error.t()}
+  def survey_package_instances(client, study_id) do
+    resource(@survey_package_instances, fn ->
+      for instance <- CastorEDC.Surveys.stream_survey_package_instances(client, study_id) do
+        %{instance | parent_id: blank_to_nil(instance.parent_id), parent_type: parent_type(instance.parent_type)}
+      end
+    end)
+  end
+
+  @doc """
+  The study's repeating data instances, such as each adverse event a
+  participant had, a row each.
+
+  Columns: `repeating_data_instance_id`, `name` (the instance's own),
+  `repeating_data_id` and `repeating_data_name`, `participant_id`,
+  `status`, `archived` (`:boolean`), `parent_id` and `parent_type` (what
+  it was created from, if anything), `created_by`, and `created_on`,
+  which is `{:naive_datetime, :microsecond}` in the server's time zone,
+  as the API gives it. The rest are `:string`.
+
+  The instances' values are in `data_points/3`, under their
+  `repeating_data_instance_id` as `instance_id`.
+  """
+  @spec repeating_data_instances(CastorEDC.client(), String.t()) ::
+          {:ok, DataFrame.t()} | {:error, CastorEDC.Error.t()}
+  def repeating_data_instances(client, study_id) do
+    resource(@repeating_data_instances, fn ->
+      for instance <- CastorEDC.RepeatingData.stream_repeating_data_instances(client, study_id) do
+        Map.merge(instance, %{
+          repeating_data_id: instance.repeating_data && instance.repeating_data.id,
+          parent_id: blank_to_nil(instance.parent_id),
+          parent_type: blank_to_nil(instance.parent_type)
+        })
+      end
+    end)
+  end
+
+  @doc """
+  The queries raised on the study's values, a row each.
+
+  Columns: `query_id`, `participant_id`, `field_id`, `status`,
+  `first_query_remark`, `remarks` (`{:s, 64}`, how many remarks the
+  query has), `created_by`, `created_on`, `updated_by` and `updated_on`.
+  The times are `{:datetime, :microsecond, "Etc/UTC"}`, the rest
+  `:string`.
+
+  Join `field_id` with `fields/2` for the field's name and form.
+  """
+  @spec queries(CastorEDC.client(), String.t()) :: {:ok, DataFrame.t()} | {:error, CastorEDC.Error.t()}
+  def queries(client, study_id) do
+    resource(@queries, fn ->
+      for query <- CastorEDC.Queries.stream_queries(client, study_id) do
+        Map.put(query, :remarks, query.query_remarks && length(query.query_remarks))
+      end
+    end)
+  end
+
+  @doc """
   The study's data from a participant data export, as a `t:wide/0` map of
   frames: one for the study's values, and one per repeating data and per
   survey.
@@ -275,12 +416,12 @@ defmodule CastorEDC.Explorer do
   `survey_package_id` for surveys. Their times are
   `{:naive_datetime, :microsecond}`, in the server's time zone.
 
-  The export writes values marked missing as -95 to -99 in numeric and
-  year fields and as the dates 1 January 2995 to 2999 in date fields;
-  they become nulls, and with `missing_columns: true` their codes go in a
-  `<variable>_missing` column of `{:s, 16}`. In other fields, and in
-  checkboxes, the export leaves them empty, so the frames can't tell them
-  from values never entered.
+  The export writes values marked missing as the dates 1 January 2995 to
+  2999 in date fields, and as -95 to -99 in every other field but
+  checkboxes; they become nulls, and with `missing_columns: true` their
+  codes go in a `<variable>_missing` column of `{:s, 16}`. A checkbox's
+  missing values are left empty, so its columns can't tell them from
+  values never entered.
 
   ## Options
 
@@ -291,20 +432,204 @@ defmodule CastorEDC.Explorer do
     * `:timeout` and `:poll_interval` - how long to wait for the export,
       and how soon to check on it first, as for
       `CastorEDC.Export.participant_data/3`
+    * `:from` - read an export already made instead of running one: the
+      `CastorEDC.Export` struct that `CastorEDC.Export.download/4` or
+      `CastorEDC.Export.participant_data/3` returned, whether it holds the zip in memory, saved it with `:into`
+      or unzipped it, or the path to such a zip or to the directory it was
+      unzipped into. The client still fetches the names of the study's
+      repeating data and surveys, to key their frames by. It can't be
+      combined with the options above that run the export, and raises
+      `ArgumentError` for an export that isn't a participant data export
+      in CSV, hasn't been downloaded, or doesn't unzip.
+
+  ## Examples
+
+      {:ok, export} = CastorEDC.Export.download(client, study_id, export)
+      {:ok, frames} = CastorEDC.Explorer.participant_data(client, study_id, from: export)
+
+      {:ok, frames} = CastorEDC.Explorer.participant_data(client, study_id, from: "exports/study.zip")
   """
   @spec participant_data(CastorEDC.client(), String.t(), keyword()) :: {:ok, wide()} | {:error, CastorEDC.Error.t()}
   def participant_data(client, study_id, opts \\ []) do
     {missing_columns, opts} = Keyword.pop(opts, :missing_columns, false)
-    export_opts = [format: :csv, unzip: true] ++ Keyword.take(opts, [:filters, :timeout, :poll_interval])
+    {from, opts} = Keyword.pop(opts, :from)
 
-    with {:ok, export} <- CastorEDC.Export.participant_data(client, study_id, export_opts) do
+    with {:ok, files} <- export_files(client, study_id, from, opts, []) do
+      if Domains.grouped?(files),
+        do: raise(ArgumentError, "the export is grouped by domain; read it with CastorEDC.Explorer.domains/3")
+
       repeating_data = Enum.map(CastorEDC.RepeatingData.stream_repeating_data(client, study_id), & &1.name)
       surveys = Enum.map(CastorEDC.Surveys.stream_surveys(client, study_id), & &1.name)
 
-      {:ok, ParticipantData.read(export.files, repeating_data, surveys, missing_columns)}
+      {:ok, ParticipantData.read(files, repeating_data, surveys, missing_columns)}
     end
   rescue
     error in CastorEDC.Error -> {:error, error}
+  end
+
+  @doc """
+  The study's data from a participant data export grouped by domain, as a
+  frame per domain, keyed by the domain's abbreviation, such as `"DM"`.
+
+  A study's domains map its fields, from any visit, repeating data or
+  survey, to the variables of a domain, as in CDISC SDTM. The grouped
+  export, which this runs in CSV, has a file per domain with a row per
+  participant per visit, repeating data instance or survey that holds the
+  domain's values, typed by the domain's own variable list:
+
+  | Field type | Dtype |
+  | --- | --- |
+  | `numeric`, `slider` | `{:f, 64}` |
+  | `year` | `{:s, 64}` |
+  | `date` | `:date` |
+  | `date_partial` | `:string`, as `2026-05-01`, which may lack a day or month |
+  | `time` | `:time` |
+  | `datetime` | `{:naive_datetime, :microsecond}` |
+  | `numberdate` | `<variable>_number` of `{:f, 64}` and `<variable>_date` of `:date` |
+  | `checkbox` | a `:boolean` column per option, `<variable>_<option value>` |
+  | others | `:string` |
+
+  The metadata columns come first, as the export names them, except for
+  `created_on` (the participant's creation): `participant_id`,
+  `participant_status`, `site_abbreviation`, `randomization_id`,
+  `randomization_group`, `randomized_on`, `created_on`, `parent_type`,
+  `parent_name`, `visit_name`, `visit_number` (`{:s, 64}`), `type`
+  (`"Visit"`, `"Repeating data"` or `"Survey"`) and `name` (the visit or
+  instance). Times are `{:naive_datetime, :microsecond}`, in the server's
+  time zone, and the rest `:string`.
+
+  Values marked missing are nulls, whether the export wrote their codes in
+  `_U` columns of their own or in the variables' columns; with
+  `missing_columns: true`, their codes go in a `<variable>_missing` column
+  of `{:s, 16}` (one per checkbox). With `labels: true`, the export also writes the options'
+  names, and each radio and dropdown gets a `<variable>_label` column of
+  `:string` holding them.
+
+  ## Options
+
+    * `:filters` - as for `CastorEDC.Export.participant_data/3`, such as
+      `site_ids: [...]`
+    * `:missing_columns` - add the missing-value columns; `false` by
+      default
+    * `:labels` - add the option-name columns; `false` by default
+    * `:timeout` and `:poll_interval` - as for `participant_data/3`
+    * `:from` - read a grouped export already made instead of running one,
+      as for `participant_data/3`
+
+  Raises `ArgumentError` when the export given as `:from` isn't grouped.
+  """
+  @spec domains(CastorEDC.client(), String.t(), keyword()) ::
+          {:ok, %{String.t() => DataFrame.t()}} | {:error, CastorEDC.Error.t()}
+  def domains(client, study_id, opts \\ []) do
+    {missing_columns, opts} = Keyword.pop(opts, :missing_columns, false)
+    {labels, opts} = Keyword.pop(opts, :labels, false)
+    {from, opts} = Keyword.pop(opts, :from)
+    options = [grouped: true, export_coded_options_as: if(labels, do: "values_and_names", else: "values")]
+
+    with {:ok, files} <- export_files(client, study_id, from, opts, options) do
+      if not Domains.grouped?(files),
+        do: raise(ArgumentError, "the export isn't grouped by domain; read it with CastorEDC.Explorer.participant_data/3")
+
+      {:ok, Domains.read(files, missing_columns, labels)}
+    end
+  rescue
+    error in CastorEDC.Error -> {:error, error}
+  end
+
+  @doc """
+  A frame from any of the client's results: a list, `CastorEDC.Page` or
+  stream of structs (or maps), a row each, for resources this module has
+  no function of its own for.
+
+      CastorEDC.Countries.list_countries!(client) |> CastorEDC.Explorer.from_structs()
+      CastorEDC.Visits.stream_visits(client, study_id) |> CastorEDC.Explorer.from_structs()
+
+  Each field holding a plain value becomes a column named after it, in
+  alphabetical order, as the client's structs define their fields. Fields holding a nested object or a list,
+  such as a participant's `site`, are left out, as is the `extra` map;
+  take those from the structs yourself.
+
+  Unlike the other functions, the dtypes are inferred from the values, as
+  nothing else describes them: `:string` for text, `{:s, 64}` for
+  integers, `{:f, 64}` for floats (and integers mixed with them),
+  `:boolean`, `:date`, `:time`, `{:naive_datetime, :microsecond}`, and
+  `{:datetime, :microsecond, "Etc/UTC"}` for `DateTime`s, which are moved
+  to UTC. A column whose values are of different kinds becomes `:string`,
+  and one without any values `:null`. An empty list gives an empty frame
+  without columns.
+
+  Returns the frame, and raises the `CastorEDC.Error` of a stream whose
+  request fails.
+  """
+  @spec from_structs(Enumerable.t() | CastorEDC.Page.t()) :: DataFrame.t()
+  def from_structs(%CastorEDC.Page{entries: entries}), do: from_structs(entries)
+
+  def from_structs(structs) do
+    rows = Enum.to_list(structs)
+
+    rows
+    |> keys()
+    |> Enum.flat_map(fn key -> struct_column(key, Enum.map(rows, &Map.get(&1, key))) end)
+    |> Frame.new()
+  end
+
+  # The rows' keys, sorted, without a struct's own and its extra map.
+  defp keys(rows) do
+    rows |> Enum.flat_map(&Map.keys/1) |> Enum.uniq() |> Kernel.--([:__struct__, :extra]) |> Enum.sort()
+  end
+
+  defp struct_column(key, values) do
+    case values |> Enum.reject(&is_nil/1) |> Enum.map(&kind/1) |> Enum.uniq() do
+      [] ->
+        [{to_string(key), :null, values}]
+
+      kinds ->
+        if :nested in kinds,
+          do: [],
+          else: [{to_string(key), inferred_dtype(kinds), cast_all(values, inferred_dtype(kinds))}]
+    end
+  end
+
+  defp kind(value) when is_binary(value) or (is_atom(value) and not is_boolean(value)), do: :string
+  defp kind(value) when is_boolean(value), do: :boolean
+  defp kind(value) when is_integer(value), do: :integer
+  defp kind(value) when is_float(value), do: :float
+  defp kind(%Date{}), do: :date
+  defp kind(%Time{}), do: :time
+  defp kind(%NaiveDateTime{}), do: :naive_datetime
+  defp kind(%DateTime{}), do: :datetime
+  defp kind(_value), do: :nested
+
+  defp inferred_dtype([:string]), do: :string
+  defp inferred_dtype([:boolean]), do: :boolean
+  defp inferred_dtype([:integer]), do: {:s, 64}
+  defp inferred_dtype(kinds) when kinds in [[:float], [:integer, :float], [:float, :integer]], do: {:f, 64}
+  defp inferred_dtype([:date]), do: :date
+  defp inferred_dtype([:time]), do: :time
+  defp inferred_dtype([:naive_datetime]), do: {:naive_datetime, :microsecond}
+  defp inferred_dtype([:datetime]), do: @datetime
+  defp inferred_dtype(_mixed), do: :string
+
+  defp cast_all(values, :string), do: Enum.map(values, &Frame.text/1)
+  defp cast_all(values, dtype), do: Enum.map(values, &Frame.cast(&1, dtype))
+
+  @export_options [:filters, :timeout, :poll_interval]
+
+  # The export's files as {name, contents}, from a new export with the
+  # export options given, or the one given as :from.
+  defp export_files(client, study_id, nil, opts, options) do
+    export_opts = [format: :csv, unzip: true, options: options] ++ Keyword.take(opts, @export_options)
+
+    with {:ok, export} <- CastorEDC.Export.participant_data(client, study_id, export_opts) do
+      {:ok, ParticipantData.contents(export.files)}
+    end
+  end
+
+  defp export_files(_client, _study_id, from, opts, _options) do
+    case Keyword.take(opts, @export_options) do
+      [] -> {:ok, ParticipantData.files(from)}
+      given -> raise ArgumentError, ":from reads an export already made, so it takes no #{inspect(Keyword.keys(given))}"
+    end
   end
 
   defp resource(columns, rows) do
@@ -316,10 +641,20 @@ defmodule CastorEDC.Explorer do
   defp value_type({list, of}), do: "#{list}(#{of})"
   defp value_type(type), do: Atom.to_string(type)
 
+  defp blank_to_nil(""), do: nil
+  defp blank_to_nil(value), do: value
+
+  # A survey package instance's parent type is a code: 0 for none, 1 for a
+  # visit, 2 for a repeating data instance.
+  defp parent_type("0"), do: nil
+  defp parent_type("1"), do: "visit"
+  defp parent_type("2"), do: "repeating_data_instance"
+  defp parent_type(type), do: blank_to_nil(type)
+
   defp flag(nil), do: nil
   defp flag(value), do: value not in [0, false]
 
-  defp long(client, study_id, opts) do
+  defp long(client, study_id, opts, false) do
     client
     |> Tabular.data_points(study_id, opts)
     |> Enum.map(&%{&1 | source: Atom.to_string(&1.source)})
@@ -327,7 +662,30 @@ defmodule CastorEDC.Explorer do
     |> Frame.from_rows(@long)
   end
 
-  defp wide(client, study_id, opts, missing_columns) do
+  defp long(client, study_id, opts, true) do
+    schema = Keyword.get_lazy(opts, :schema, fn -> schema!(client, study_id) end)
+    names = schema |> Map.values() |> Map.new(&{&1.field_id, option_names(&1)})
+    {before, rest} = Enum.split_while(@long, &(elem(&1, 0) != "missing"))
+
+    client
+    |> Tabular.data_points(study_id, Keyword.put(opts, :schema, schema))
+    |> Enum.map(&%{&1 | source: Atom.to_string(&1.source)})
+    |> Enum.map(&Map.merge(&1, %{missing: Frame.missing(&1.value), label: label(&1.value, names[&1.field_id])}))
+    |> Frame.from_rows(before ++ [@label | rest])
+  end
+
+  # An option field's names by their values; nil for other fields.
+  defp option_names(%{option_group: %{options: [_option | _more] = options}}), do: Map.new(options, &{&1.value, &1.name})
+  defp option_names(_column), do: nil
+
+  # The name of an option value, or the names of a checkbox's, `;` between
+  # them; a value that isn't an option keeps itself.
+  defp label(_value, nil), do: nil
+  defp label(value, names) when is_binary(value), do: Map.get(names, value, value)
+  defp label(values, names) when is_list(values), do: Enum.map_join(values, ";", &label(&1, names))
+  defp label(_value, _names), do: nil
+
+  defp wide(client, study_id, opts, missing_columns, labels) do
     schema = Keyword.get_lazy(opts, :schema, fn -> schema!(client, study_id) end)
     sources = Keyword.get(opts, :sources, @sources)
 
@@ -338,11 +696,12 @@ defmodule CastorEDC.Explorer do
 
     frames =
       for {{context, parent_id} = key, columns} <- groups(schema, sources) do
-        {context, parent_id, parent_name(columns), frame(context, columns, Map.get(rows, key, []), missing_columns)}
+        frame = frame(context, columns, Map.get(rows, key, []), missing_columns, labels)
+        {context, parent_id, parent_name(columns), frame}
       end
 
     %{
-      study: Enum.find_value(frames, &study_frame/1) || frame(:study, [], [], missing_columns),
+      study: Enum.find_value(frames, &study_frame/1) || frame(:study, [], [], missing_columns, labels),
       repeating_data: named(frames, :repeating_data),
       surveys: named(frames, :survey)
     }
@@ -375,7 +734,7 @@ defmodule CastorEDC.Explorer do
     Map.new(entries, fn {id, name, frame} -> {if(Map.has_key?(shared, name), do: id, else: name), frame} end)
   end
 
-  defp frame(context, columns, rows, missing_columns) do
+  defp frame(context, columns, rows, missing_columns, labels) do
     fixed =
       [{"participant_id", :participant_id}, {"site_id", :site_id}] ++
         if context == :study, do: [], else: [{"instance_id", :instance_id}]
@@ -383,7 +742,7 @@ defmodule CastorEDC.Explorer do
     variables =
       columns
       |> Enum.sort_by(&{&1.position, variable_name(&1)})
-      |> Enum.flat_map(&variable_columns(&1, missing_columns))
+      |> Enum.flat_map(&variable_columns(&1, missing_columns, labels))
 
     rows = Enum.sort_by(rows, &{&1.participant_id, &1.instance_id})
 
@@ -395,10 +754,11 @@ defmodule CastorEDC.Explorer do
 
   # The frame columns of a field: {name, dtype, a function reading the
   # column's value from a wide row}.
-  defp variable_columns(column, missing_columns) do
+  defp variable_columns(column, missing_columns, labels) do
     names = for {name, _value} <- Tabular.wide_cells([column], %{}), do: name
     dtype = dtype(column)
-    values = for name <- names, do: {name, dtype, &Frame.cast(Map.get(&1, name), dtype)}
+    option_names = if labels and dtype == :string, do: option_names(column)
+    values = for name <- names, do: {name, dtype, &Frame.cast(label_or_value(Map.get(&1, name), option_names), dtype)}
 
     if missing_columns do
       first = hd(names)
@@ -407,6 +767,10 @@ defmodule CastorEDC.Explorer do
       values
     end
   end
+
+  defp label_or_value(value, nil), do: value
+  defp label_or_value(value, names) when is_binary(value) or is_list(value), do: label(value, names)
+  defp label_or_value(value, _names), do: value
 
   defp variable_name(%{variable_name: name}) when is_binary(name) and name != "", do: name
   defp variable_name(%{field_id: id}), do: id

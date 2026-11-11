@@ -1,7 +1,7 @@
 defmodule CastorEDC.Explorer.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
+  @version "0.2.0"
   @source_url "https://github.com/basbl/ex_castor_edc_explorer"
 
   def project do
@@ -57,7 +57,7 @@ defmodule CastorEDC.Explorer.MixProject do
       main: "CastorEDC.Explorer",
       source_ref: "v#{@version}",
       source_url: @source_url,
-      extras: ["README.md", "notebook/analysis.livemd", "CHANGELOG.md"]
+      extras: ["README.md", "notebook/analysis.livemd", "notebook/charts.livemd", "CHANGELOG.md"]
     ]
   end
 
@@ -82,7 +82,7 @@ defmodule CastorEDC.Explorer.MixProject do
   # together; without it, the package builds on the released core.
   defp castor_edc do
     case System.get_env("CASTOR_EDC_PATH") do
-      blank when blank in [nil, ""] -> {:ex_castor_edc, "~> 1.0.0-rc.1"}
+      blank when blank in [nil, ""] -> {:ex_castor_edc, "~> 1.0"}
       path -> {:ex_castor_edc, path: path}
     end
   end

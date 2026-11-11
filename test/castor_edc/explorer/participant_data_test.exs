@@ -11,7 +11,7 @@ defmodule CastorEDC.Explorer.ParticipantDataTest do
   @study_csv @bom <>
                ~s("Participant Id";"Participant Status";"Site Abbreviation";"Participant Creation Date";weight;year;visit;seen;time;sex;"family#Renal disease";family#Deafness;note\n) <>
                ~s(P1;"Not Set";AMS;"07-10-2026 21:06:33";72.5;1980;07-10-2026;"07-10-2026 12:30";12:30;1;1;0;"fine; thanks"\n) <>
-               ~s(P2;"Not Set";UTR;"08-10-2026 10:00:33";-98;-95;01-01-2997;;;;0;0;\n)
+               ~s(P2;"Not Set";UTR;"08-10-2026 10:00:33";-98;-95;01-01-2997;-96;;-99;0;0;-98\n)
 
   @repeating_csv @bom <>
                    ~s("Participant Id";"Participant Status";"Repeating Data Creation Date";"Repeating data Name Custom";"Repeating data Parent";sys\n) <>
@@ -128,8 +128,12 @@ defmodule CastorEDC.Explorer.ParticipantDataTest do
       assert columns["weight_missing"] == [nil, 98]
       assert columns["year_missing"] == [nil, 95]
       assert columns["visit_missing"] == [nil, 97]
+      assert columns["seen_missing"] == [nil, 96]
+      assert columns["time_missing"] == [nil, nil]
+      assert columns["sex_missing"] == [nil, 99]
+      assert columns["note_missing"] == [nil, 98]
       assert DataFrame.dtypes(study)["visit_missing"] == {:s, 16}
-      refute "sex_missing" in DataFrame.names(study)
+      refute "family_0_missing" in DataFrame.names(study)
     end
 
     test "queues a CSV export with the filters given" do
@@ -153,6 +157,75 @@ defmodule CastorEDC.Explorer.ParticipantDataTest do
                CastorEDC.Explorer.participant_data(client, Study.id(), poll_interval: 0)
     end
 
+    test "reads a downloaded export without running another" do
+      export = %CastorEDC.Export{id: "export-1", type: :participant_data, format: :csv, data: zip(@files)}
+
+      assert {:ok, %{study: study, repeating_data: %{"Blood pressure" => _}, surveys: %{"GAD-7 (short)" => _}}} =
+               CastorEDC.Explorer.participant_data(no_export_client(), Study.id(), from: export)
+
+      assert DataFrame.to_columns(study)["weight"] == [72.5, nil]
+    end
+
+    test "reads an export unzipped in memory" do
+      export = %CastorEDC.Export{id: "export-1", type: :participant_data, format: :csv, files: @files}
+
+      assert {:ok, %{study: study}} = CastorEDC.Explorer.participant_data(no_export_client(), Study.id(), from: export)
+      assert DataFrame.n_rows(study) == 2
+    end
+
+    @tag :tmp_dir
+    test "reads an export saved as a zip, or unzipped into a directory", %{tmp_dir: dir} do
+      zip = Path.join(dir, "export.zip")
+      File.write!(zip, zip(@files))
+
+      unzipped = Path.join(dir, "unzipped")
+      File.mkdir_p!(unzipped)
+
+      paths =
+        for {name, contents} <- @files do
+          path = Path.join(unzipped, name)
+          File.write!(path, contents)
+          path
+        end
+
+      saved = %CastorEDC.Export{id: "export-1", type: :participant_data, format: :csv, path: zip}
+      extracted = %CastorEDC.Export{id: "export-1", type: :participant_data, format: :csv, path: unzipped, files: paths}
+
+      for from <- [zip, unzipped, saved, extracted] do
+        assert {:ok, %{study: study, surveys: surveys}} =
+                 CastorEDC.Explorer.participant_data(no_export_client(), Study.id(), from: from)
+
+        assert DataFrame.to_columns(study)["participant_id"] == ["P1", "P2"]
+        assert Map.has_key?(surveys, "GAD-7 (short)")
+      end
+    end
+
+    test "refuses what it can't read as a participant data export" do
+      client = no_export_client()
+
+      assert_raise ArgumentError, ~r/participant data export in CSV, got :participant_data in :spss/, fn ->
+        CastorEDC.Explorer.participant_data(client, Study.id(),
+          from: %CastorEDC.Export{id: "e", type: :participant_data, format: :spss, data: "zip"}
+        )
+      end
+
+      assert_raise ArgumentError, ~r/export e hasn't been downloaded/, fn ->
+        CastorEDC.Explorer.participant_data(client, Study.id(),
+          from: %CastorEDC.Export{id: "e", type: :participant_data, format: :csv}
+        )
+      end
+
+      assert_raise ArgumentError, ~r/couldn't unzip the export/, fn ->
+        CastorEDC.Explorer.participant_data(client, Study.id(),
+          from: %CastorEDC.Export{id: "e", type: :participant_data, format: :csv, data: "not a zip"}
+        )
+      end
+
+      assert_raise ArgumentError, ~r/takes no \[:filters\]/, fn ->
+        CastorEDC.Explorer.participant_data(client, Study.id(), from: "export.zip", filters: [site_ids: ["site-1"]])
+      end
+    end
+
     test "warns about a value it can't read, and leaves it out" do
       files = [
         {"Study_export_1.csv", "\"Participant Id\";weight\nP1;heavy\n"},
@@ -167,6 +240,12 @@ defmodule CastorEDC.Explorer.ParticipantDataTest do
 
       assert log =~ ~s(couldn't read "heavy" in column weight as a number)
     end
+  end
+
+  # A client whose exports fail, to show an export given as :from is read
+  # without running another.
+  defp no_export_client do
+    client(%{"/export" => Test.json(%{"detail" => "No exports here"}, status: 500)})
   end
 
   defp client(overrides \\ %{}) do

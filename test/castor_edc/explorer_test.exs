@@ -2,6 +2,7 @@ defmodule CastorEDC.ExplorerTest do
   use ExUnit.Case, async: true
 
   alias CastorEDC.Explorer.Study
+  alias CastorEDC.Model.Country
   alias Explorer.DataFrame
 
   describe "data_points/3" do
@@ -101,6 +102,45 @@ defmodule CastorEDC.ExplorerTest do
       assert DataFrame.to_columns(study)["weight_missing"] == [nil, 98]
       assert DataFrame.to_columns(study)["family_missing"] == [nil, 95]
       refute "family_0_missing" in DataFrame.names(study)
+    end
+
+    test "adds the options' names after the values when asked" do
+      assert {:ok, frame} = CastorEDC.Explorer.data_points(Study.client(), Study.id(), labels: true)
+
+      names = DataFrame.names(frame)
+      assert Enum.slice(names, Enum.find_index(names, &(&1 == "value")), 3) == ~w(value label missing)
+      assert DataFrame.dtypes(frame)["label"] == :string
+
+      rows = DataFrame.to_rows(frame)
+      assert %{"value" => "1", "label" => "Female"} = value(rows, "P1", "sex")
+      assert %{"value" => "0;2", "label" => "Renal;Diabetes"} = value(rows, "P1", "family")
+      assert %{"value" => "72.5", "label" => nil} = value(rows, "P1", "weight")
+      assert %{"value" => nil, "missing" => 95, "label" => nil} = value(rows, "P2", "family")
+      assert %{"value" => "3", "label" => "Nearly every day"} = value(rows, "P2", "gad")
+    end
+
+    test "keeps a value that isn't one of its field's options as its label" do
+      client =
+        Study.client(%{
+          "/data-points/survey-instance" =>
+            Study.page("items", [
+              %{"participant_id" => "P2", "field_id" => "f-gad", "field_value" => "7", "survey_instance_id" => "si-1"}
+            ])
+        })
+
+      assert {:ok, frame} = CastorEDC.Explorer.data_points(client, Study.id(), labels: true, sources: [:survey])
+      assert [%{"value" => "7", "label" => "7"}] = DataFrame.to_rows(frame)
+    end
+
+    test "puts the options' names in the wide frames' option columns when asked" do
+      assert {:ok, %{study: study, surveys: %{"GAD-7" => gad}}} =
+               CastorEDC.Explorer.data_points(Study.client(), Study.id(), format: :wide, labels: true)
+
+      assert %{"sex" => "Female", "family_0" => true, "family_1" => false, "weight" => 72.5} =
+               study |> DataFrame.to_rows() |> hd()
+
+      assert DataFrame.dtypes(study)["family_0"] == :boolean
+      assert DataFrame.to_columns(gad)["gad"] == ["Nearly every day"]
     end
 
     test "keeps the columns of a study without values" do
@@ -250,6 +290,184 @@ defmodule CastorEDC.ExplorerTest do
                  "order" => 1
                }
              ]
+    end
+  end
+
+  describe "survey_package_instances/2" do
+    test "gives a row per survey package instance" do
+      assert {:ok, frame} = CastorEDC.Explorer.survey_package_instances(Study.client(), Study.id())
+
+      assert DataFrame.dtypes(frame)["progress"] == {:s, 64}
+      assert DataFrame.dtypes(frame)["finished_on"] == {:datetime, :microsecond, "Etc/UTC"}
+
+      assert [spi1, spi2] = DataFrame.to_rows(frame)
+
+      assert %{
+               "survey_package_instance_id" => "spi-1",
+               "survey_package_name" => "Anxiety",
+               "participant_id" => "P2",
+               "site_name" => "Utrecht",
+               "status" => "Finished",
+               "progress" => 100,
+               "locked" => false,
+               "parent_id" => "visit-1",
+               "parent_type" => "visit",
+               "created_on" => ~U[2026-10-07 19:50:13.000000Z],
+               "sent_on" => ~U[2026-10-08 07:00:00.000000Z],
+               "finished_on" => nil
+             } = spi1
+
+      assert %{"survey_package_instance_id" => "spi-2", "parent_id" => nil, "parent_type" => nil} = spi2
+    end
+
+    test "returns the error of a failed request" do
+      client = Study.client(%{"/survey-package-instance" => CastorEDC.Test.json(%{"detail" => "Forbidden"}, status: 403)})
+      assert {:error, %CastorEDC.Error{status: 403}} = CastorEDC.Explorer.survey_package_instances(client, Study.id())
+    end
+  end
+
+  describe "repeating_data_instances/2" do
+    test "gives a row per repeating data instance" do
+      assert {:ok, frame} = CastorEDC.Explorer.repeating_data_instances(Study.client(), Study.id())
+
+      assert DataFrame.dtypes(frame)["created_on"] == {:naive_datetime, :microsecond}
+
+      assert [
+               %{
+                 "repeating_data_instance_id" => "rdi-1",
+                 "name" => "Blood pressure - 07-10-2026 21:46:26",
+                 "repeating_data_id" => "rd-1",
+                 "repeating_data_name" => "Blood pressure",
+                 "participant_id" => "P1",
+                 "archived" => false,
+                 "parent_id" => nil,
+                 "parent_type" => nil,
+                 "created_on" => ~N[2026-10-07 21:46:26.000000]
+               },
+               %{"repeating_data_instance_id" => "rdi-2", "repeating_data_id" => nil, "archived" => true}
+             ] = DataFrame.to_rows(frame)
+    end
+  end
+
+  describe "queries/2" do
+    test "gives a row per query" do
+      assert {:ok, frame} = CastorEDC.Explorer.queries(Study.client(), Study.id())
+
+      assert DataFrame.to_rows(frame) == [
+               %{
+                 "query_id" => "q-1",
+                 "participant_id" => "P1",
+                 "field_id" => "f-weight",
+                 "status" => "New",
+                 "first_query_remark" => "Is this right?",
+                 "remarks" => 2,
+                 "created_by" => nil,
+                 "created_on" => ~U[2026-10-08 08:00:00.000000Z],
+                 "updated_by" => nil,
+                 "updated_on" => nil
+               }
+             ]
+    end
+
+    test "keeps the columns when there are no queries" do
+      client = Study.client(%{"/query" => Study.page("queries", [])})
+
+      assert {:ok, frame} = CastorEDC.Explorer.queries(client, Study.id())
+      assert DataFrame.n_rows(frame) == 0
+      assert DataFrame.dtypes(frame)["created_on"] == {:datetime, :microsecond, "Etc/UTC"}
+    end
+  end
+
+  describe "from_structs/1" do
+    test "gives a row per struct, a column per plain field" do
+      countries = [
+        Country.new(%{"id" => 169, "country_name" => "Netherlands", "country_cca2" => "NL"}),
+        Country.new(%{"id" => 233, "country_name" => "United States", "unknown" => "kept in extra"})
+      ]
+
+      frame = CastorEDC.Explorer.from_structs(countries)
+
+      assert DataFrame.names(frame) == ~w(country_cca2 country_cca3 country_id country_name country_tld id)
+
+      assert DataFrame.dtypes(frame) == %{
+               "country_cca2" => :string,
+               "country_cca3" => :null,
+               "country_id" => :null,
+               "country_name" => :string,
+               "country_tld" => :null,
+               "id" => {:s, 64}
+             }
+
+      assert DataFrame.to_columns(frame)["country_name"] == ["Netherlands", "United States"]
+    end
+
+    test "reads a page, or a stream of the client's" do
+      page = %CastorEDC.Page{entries: [%{name: "a"}, %{name: "b"}]}
+      assert DataFrame.to_columns(CastorEDC.Explorer.from_structs(page)) == %{"name" => ["a", "b"]}
+
+      frame = Study.client() |> CastorEDC.Sites.stream_sites(Study.id()) |> CastorEDC.Explorer.from_structs()
+      assert DataFrame.to_columns(frame)["abbreviation"] == ["AMS", nil]
+      assert DataFrame.dtypes(frame)["deleted"] == :boolean
+    end
+
+    test "infers the dtypes from the values, leaving nested objects and lists out" do
+      rows = [
+        %{
+          text: "a",
+          count: 1,
+          share: 0.5,
+          mixed_number: 1,
+          flag: true,
+          day: ~D[2026-11-08],
+          at: ~T[12:30:00],
+          local: ~N[2026-11-08 12:30:00],
+          utc: DateTime.new!(~D[2026-11-08], ~T[12:30:00], "Etc/UTC"),
+          status: :open,
+          mixed: "1",
+          site: %{id: "site-1"},
+          tags: ["x"]
+        },
+        %{mixed_number: 2.5, mixed: 2, status: nil}
+      ]
+
+      frame = CastorEDC.Explorer.from_structs(rows)
+
+      assert DataFrame.dtypes(frame) == %{
+               "text" => :string,
+               "count" => {:s, 64},
+               "share" => {:f, 64},
+               "mixed_number" => {:f, 64},
+               "flag" => :boolean,
+               "day" => :date,
+               "at" => :time,
+               "local" => {:naive_datetime, :microsecond},
+               "utc" => {:datetime, :microsecond, "Etc/UTC"},
+               "status" => :string,
+               "mixed" => :string
+             }
+
+      assert %{"mixed" => ["1", "2"], "mixed_number" => [1.0, 2.5], "status" => ["open", nil]} =
+               DataFrame.to_columns(frame)
+    end
+
+    test "moves datetimes to UTC" do
+      local = DateTime.new!(~D[2026-11-08], ~T[12:30:00], "Europe/Amsterdam", Tz.TimeZoneDatabase)
+
+      assert DataFrame.to_columns(CastorEDC.Explorer.from_structs([%{at: local}])) == %{
+               "at" => [~U[2026-11-08 11:30:00.000000Z]]
+             }
+    end
+
+    test "gives an empty frame for no structs" do
+      assert DataFrame.names(CastorEDC.Explorer.from_structs([])) == []
+    end
+
+    test "raises the error of a stream whose request fails" do
+      client = Study.client(%{"/site" => CastorEDC.Test.json(%{"detail" => "Forbidden"}, status: 403)})
+
+      assert_raise CastorEDC.Error, fn ->
+        client |> CastorEDC.Sites.stream_sites(Study.id()) |> CastorEDC.Explorer.from_structs()
+      end
     end
   end
 end
