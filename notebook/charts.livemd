@@ -11,7 +11,7 @@ Mix.install(
   [
     if(explorer,
       do: {:ex_castor_edc_explorer, path: explorer},
-      else: {:ex_castor_edc_explorer, "~> 0.1.0"}
+      else: {:ex_castor_edc_explorer, "~> 0.2.0"}
     ),
     if(kino, do: {:ex_castor_edc_kino, path: kino}, else: {:ex_castor_edc_kino, "~> 0.1.0"}),
     {:kino_explorer, "~> 0.1.25"},

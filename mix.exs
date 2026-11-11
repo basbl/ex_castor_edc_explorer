@@ -1,7 +1,7 @@
 defmodule CastorEDC.Explorer.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
+  @version "0.2.0"
   @source_url "https://github.com/basbl/ex_castor_edc_explorer"
 
   def project do

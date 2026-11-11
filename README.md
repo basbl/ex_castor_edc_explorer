@@ -11,7 +11,7 @@ It builds on [ex_castor_edc](https://hexdocs.pm/ex_castor_edc), and takes every 
 ```elixir
 def deps do
   [
-    {:ex_castor_edc_explorer, "~> 0.1.0"}
+    {:ex_castor_edc_explorer, "~> 0.2.0"}
   ]
 end
 ```
